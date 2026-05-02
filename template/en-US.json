@@ -1,117 +1,558 @@
 {
   "languageTag": "en-US",
-  "fileDescription": "Strings for sample_addon.",
+  "fileDescription": "Strings for salmanshh_lumencast.",
   "text": {
-    "plugins": {
-      "sample_addon": {
-        "name": "Sample Addon",
-        "description": "Description",
+    "behaviors": {
+      "salmanshh_lumencast": {
+        "name": "LumenCast",
+        "description": "Mesh-driven line of sight and dynamic lighting for world objects.",
         "help-url": "https://www.construct.net",
         "aceCategories": {
-          "Ace_Folders_In_Category_Folder": "Ace_Folders_In_Category_Folder",
-          "Aces_Files_In_Category_Folder": "Aces_Files_In_Category_Folder",
-          "Aces_In_Single_File": "Aces_In_Single_File"
+          "Detection": "Detection",
+          "Mesh": "Mesh",
+          "Setup": "Setup",
+          "Batcher": "Batcher",
+          "State": "State",
+          "Visibility": "Visibility"
         },
-        "properties": {},
+        "properties": {
+          "batcherHandshake": {
+            "name": "Batcher handshake",
+            "desc": "Allow LumenBatch to claim this light for batched rendering."
+          },
+          "obstacleMode": {
+            "name": "Obstacle mode",
+            "desc": "How obstacle candidates are collected each tick.",
+            "items": {
+              "solid_behaviour": "Solid behaviour",
+              "custom_objects": "Custom objects",
+              "tag": "Tag"
+            }
+          },
+          "obstacleObjects": {
+            "name": "Obstacle object",
+            "desc": "Seed obstacle object type for custom object mode."
+          },
+          "obstacleTag": {
+            "name": "Obstacle tag",
+            "desc": "Primary instance tag used in tag obstacle mode."
+          },
+          "detectionTag": {
+            "name": "Detection tag",
+            "desc": "Instance tag used for enter and exit detection events."
+          },
+          "lightRadius": {
+            "name": "Light radius",
+            "desc": "Maximum ray distance in world pixels."
+          },
+          "rayArc": {
+            "name": "Ray arc",
+            "desc": "Angular sweep in degrees centered on the facing direction."
+          },
+          "rayCount": {
+            "name": "Ray count",
+            "desc": "Number of primary rays cast per update."
+          },
+          "facingAngle": {
+            "name": "Facing angle",
+            "desc": "Angle offset added to the host object's angle."
+          },
+          "meshDeformEnabled": {
+            "name": "Mesh deform enabled",
+            "desc": "Write the visibility polygon to the host object's mesh each tick."
+          },
+          "detectionInterval": {
+            "name": "Detection interval",
+            "desc": "Seconds between detection sweeps. Zero means every tick."
+          },
+          "cullMode": {
+            "name": "Cull mode",
+            "desc": "Broadphase culling mode before raycasting.",
+            "items": {
+              "radius_aabb": "Radius AABB",
+              "none": "None"
+            }
+          },
+          "debugOverlay": {
+            "name": "Debug overlay",
+            "desc": "Draw debugger information in preview builds when available."
+          }
+        },
         "actions": {
-          "ActionCombo": {
-            "list-name": "Sample Action Combo",
-            "display-text": "Sample Action Combo {0}",
-            "description": "This is a sample action",
+          "ClearDetectedObjects": {
+            "list-name": "Clear detected objects",
+            "display-text": "Clear detected objects",
+            "description": "Clear the cached visible set used for enter and exit events.",
+            "params": {}
+          },
+          "ForceDetectionSweep": {
+            "list-name": "Force detection sweep",
+            "display-text": "Force detection sweep",
+            "description": "Immediately test all detection-tagged objects against the current polygon.",
+            "params": {}
+          },
+          "DisableMeshDeform": {
+            "list-name": "Disable mesh deform",
+            "display-text": "Disable mesh deform",
+            "description": "Stop deforming the host mesh until re-enabled.",
+            "params": {}
+          },
+          "EnableMeshDeform": {
+            "list-name": "Enable mesh deform",
+            "display-text": "Enable mesh deform",
+            "description": "Resume writing the visibility polygon to the host mesh.",
+            "params": {}
+          },
+          "ResetMesh": {
+            "list-name": "Reset mesh",
+            "display-text": "Reset mesh",
+            "description": "Restore the mesh to a flat state and disable deformation.",
+            "params": {}
+          },
+          "SetMeshPinOrigin": {
+            "list-name": "Set mesh pin origin",
+            "display-text": "Set mesh pin origin to <b>{0}</b>, <b>{1}</b>",
+            "description": "Move the mesh fan origin in normalized host space.",
             "params": {
-              "param1": {
-                "name": "Param1",
-                "desc": "This is a sample param",
+              "x": {
+                "name": "X",
+                "desc": "Normalized X coordinate."
+              },
+              "y": {
+                "name": "Y",
+                "desc": "Normalized Y coordinate."
+              }
+            }
+          },
+          "AddObstacleObject": {
+            "list-name": "Add obstacle object",
+            "display-text": "Add <b>{0}</b> as an obstacle object",
+            "description": "Register an object type for custom object obstacle mode.",
+            "params": {
+              "objectType": {
+                "name": "Object",
+                "desc": "Object type to treat as an obstacle."
+              }
+            }
+          },
+          "AddObstacleTag": {
+            "list-name": "Add obstacle tag",
+            "display-text": "Add obstacle tag <b>{0}</b>",
+            "description": "Add a secondary obstacle tag in tag mode.",
+            "params": {
+              "tag": {
+                "name": "Tag",
+                "desc": "Tag to add."
+              }
+            }
+          },
+          "ClearObstacleObjects": {
+            "list-name": "Clear obstacle objects",
+            "display-text": "Clear all obstacle objects",
+            "description": "Remove every registered custom obstacle object type.",
+            "params": {}
+          },
+          "RemoveObstacleObject": {
+            "list-name": "Remove obstacle object",
+            "display-text": "Remove <b>{0}</b> from obstacle objects",
+            "description": "Unregister an object type from custom object obstacle mode.",
+            "params": {
+              "objectType": {
+                "name": "Object",
+                "desc": "Object type to remove."
+              }
+            }
+          },
+          "RemoveObstacleTag": {
+            "list-name": "Remove obstacle tag",
+            "display-text": "Remove obstacle tag <b>{0}</b>",
+            "description": "Remove a tag from the active obstacle tag set.",
+            "params": {
+              "tag": {
+                "name": "Tag",
+                "desc": "Tag to remove."
+              }
+            }
+          },
+          "SetCullMode": {
+            "list-name": "Set cull mode",
+            "display-text": "Set cull mode to <b>{0}</b>",
+            "description": "Choose whether obstacle candidates are AABB-culled by radius.",
+            "params": {
+              "mode": {
+                "name": "Mode",
+                "desc": "Cull mode.",
                 "items": {
-                  "test": "test",
-                  "test2": "test2"
+                  "radius_aabb": "Radius AABB",
+                  "none": "None"
                 }
               }
             }
           },
-          "Action": {
-            "list-name": "Sample Action",
-            "display-text": "Sample Action {0}",
-            "description": "This is a sample action",
+          "SetDetectionTag": {
+            "list-name": "Set detection tag",
+            "display-text": "Set detection tag to <b>{0}</b>",
+            "description": "Choose which tagged instances fire LoS enter and exit events.",
             "params": {
-              "param1": {
-                "name": "Param1",
-                "desc": "This is a sample param"
+              "tag": {
+                "name": "Tag",
+                "desc": "Detection tag."
               }
             }
           },
-          "AsyncAction": {
-            "list-name": "Sample Action Async",
-            "display-text": "Sample Action Async",
-            "description": "This is a sample action",
-            "params": {}
-          },
-          "SampleAction": {
-            "list-name": "Sample Action",
-            "display-text": "Sample Action {0}",
-            "description": "This is a sample action",
+          "SetFacingAngle": {
+            "list-name": "Set facing angle",
+            "display-text": "Set facing angle offset to <b>{0}</b>",
+            "description": "Set the cone angle offset relative to the host object.",
             "params": {
-              "param1": {
-                "name": "Param1",
-                "desc": "This is a sample param"
+              "angle": {
+                "name": "Angle",
+                "desc": "Facing angle offset in degrees."
+              }
+            }
+          },
+          "SetLightRadius": {
+            "list-name": "Set range",
+            "display-text": "Set line of sight range to <b>{0}</b>",
+            "description": "Set the maximum ray distance in pixels.",
+            "params": {
+              "radius": {
+                "name": "Range",
+                "desc": "Maximum visibility radius."
+              }
+            }
+          },
+          "SetObstacleMode": {
+            "list-name": "Set obstacle mode",
+            "display-text": "Set obstacle mode to <b>{0}</b>",
+            "description": "Switch how obstacle candidates are collected.",
+            "params": {
+              "mode": {
+                "name": "Mode",
+                "desc": "Obstacle collection mode.",
+                "items": {
+                  "solid_behaviour": "Solid behaviour",
+                  "custom_objects": "Custom objects",
+                  "tag": "Tag"
+                }
+              }
+            }
+          },
+          "SetObstacleTag": {
+            "list-name": "Set obstacle tag",
+            "display-text": "Set obstacle tag to <b>{0}</b>",
+            "description": "Replace the primary obstacle tag used in tag mode.",
+            "params": {
+              "tag": {
+                "name": "Tag",
+                "desc": "Primary obstacle tag."
+              }
+            }
+          },
+          "SetRayArc": {
+            "list-name": "Set cone of view",
+            "display-text": "Set cone of view to <b>{0}</b> degrees",
+            "description": "Set the angular sweep of the visibility cone.",
+            "params": {
+              "arc": {
+                "name": "Cone of view",
+                "desc": "Arc in degrees."
+              }
+            }
+          },
+          "SetRayCount": {
+            "list-name": "Set ray count",
+            "display-text": "Set ray count to <b>{0}</b>",
+            "description": "Set the number of primary rays cast each update.",
+            "params": {
+              "count": {
+                "name": "Ray count",
+                "desc": "Primary ray count."
               }
             }
           }
         },
         "conditions": {
-          "ConditionCombo": {
-            "list-name": "Sample Condition",
-            "display-text": "Sample Condition {0}",
-            "description": "This is a sample condition",
+          "IsBatchRendered": {
+            "list-name": "Is batch rendered",
+            "display-text": "Is batch rendered",
+            "description": "True if a batcher is currently suppressing individual mesh writes.",
+            "params": {}
+          },
+          "OnBatcherAttached": {
+            "list-name": "On batcher attached",
+            "display-text": "On batcher attached",
+            "description": "Triggered when a LumenBatch instance claims this light.",
+            "params": {}
+          },
+          "OnBatcherDetached": {
+            "list-name": "On batcher detached",
+            "display-text": "On batcher detached",
+            "description": "Triggered when a LumenBatch instance releases this light.",
+            "params": {}
+          },
+          "OnObjectEnterLoS": {
+            "list-name": "On object enter line of sight",
+            "display-text": "On object enter line of sight",
+            "description": "Triggered when a detection-tagged object becomes visible.",
+            "params": {}
+          },
+          "OnObjectExitLoS": {
+            "list-name": "On object leave line of sight",
+            "display-text": "On object leave line of sight",
+            "description": "Triggered when a detection-tagged object is no longer visible.",
+            "params": {}
+          },
+          "HasObstacleObject": {
+            "list-name": "Has obstacle object",
+            "display-text": "Has obstacle object <b>{0}</b>",
+            "description": "Check whether an object type is registered as a custom obstacle.",
             "params": {
-              "param1": {
-                "name": "Param1",
-                "desc": "This is a sample param",
+              "objectType": {
+                "name": "Object",
+                "desc": "Object type to test."
+              }
+            }
+          },
+          "HasObstacleTag": {
+            "list-name": "Has obstacle tag",
+            "display-text": "Has obstacle tag <b>{0}</b>",
+            "description": "Check whether a tag is in the active obstacle tag set.",
+            "params": {
+              "tag": {
+                "name": "Tag",
+                "desc": "Obstacle tag to check."
+              }
+            }
+          },
+          "IsMeshDeformEnabled": {
+            "list-name": "Is mesh deform enabled",
+            "display-text": "Is mesh deform enabled",
+            "description": "True when polygon data is currently written to the host mesh.",
+            "params": {}
+          },
+          "IsObstacleModeActive": {
+            "list-name": "Is obstacle mode active",
+            "display-text": "Obstacle mode is <b>{0}</b>",
+            "description": "Check whether a given obstacle mode is currently active.",
+            "params": {
+              "mode": {
+                "name": "Mode",
+                "desc": "Obstacle mode to test.",
                 "items": {
-                  "TRUE": "True",
-                  "FALSE": "False"
+                  "solid_behaviour": "Solid behaviour",
+                  "custom_objects": "Custom objects",
+                  "tag": "Tag"
                 }
               }
             }
           },
-          "Condition": {
-            "list-name": "Sample Condition",
-            "display-text": "Sample Condition {0}",
-            "description": "This is a sample condition",
+          "OnObstacleModeChanged": {
+            "list-name": "On obstacle mode changed",
+            "display-text": "On obstacle mode changed",
+            "description": "Triggered after the active obstacle mode changes.",
+            "params": {}
+          },
+          "OnObstacleTagChanged": {
+            "list-name": "On obstacle tag changed",
+            "display-text": "On obstacle tag changed",
+            "description": "Triggered after the primary obstacle tag changes in tag mode.",
+            "params": {}
+          },
+          "IsObjectInLoS": {
+            "list-name": "Has line of sight to object",
+            "display-text": "Has line of sight to object UID {0}",
+            "description": "Check whether the given UID is currently inside the cached visibility polygon.",
             "params": {
-              "param1": {
-                "name": "Param1",
-                "desc": "This is a sample param"
+              "uid": {
+                "name": "UID",
+                "desc": "UID to test."
               }
             }
           },
-          "Trigger": {
-            "list-name": "Sample Trigger",
-            "display-text": "Sample Trigger",
-            "description": "This is a sample trigger",
+          "IsPointInVisibility": {
+            "list-name": "Is point in visibility",
+            "display-text": "Point {0}, {1} is in visibility",
+            "description": "Check whether a world-space point is inside the current visibility polygon.",
+            "params": {
+              "x": {
+                "name": "X",
+                "desc": "World X."
+              },
+              "y": {
+                "name": "Y",
+                "desc": "World Y."
+              }
+            }
+          },
+          "OnMeshNotReady": {
+            "list-name": "On mesh not ready",
+            "display-text": "On mesh not ready",
+            "description": "Triggered when mesh deformation is enabled but no writable mesh is found.",
             "params": {}
           },
-          "SampleCondition": {
-            "list-name": "Sample Condition",
-            "display-text": "Sample Condition",
-            "description": "This is a sample condition",
+          "OnPolygonUpdated": {
+            "list-name": "On polygon updated",
+            "display-text": "On polygon updated",
+            "description": "Triggered after the visibility polygon is recomputed.",
             "params": {}
+          },
+          "OnRayHit": {
+            "list-name": "On ray hit",
+            "display-text": "On ray hit {0}",
+            "description": "Triggered for each primary ray that hits an obstacle.",
+            "params": {
+              "tag": {
+                "name": "Tag",
+                "desc": "Optional tag filter in tag obstacle mode."
+              }
+            }
           }
         },
         "expressions": {
-          "Expression2": {
-            "translated-name": "Expression2",
-            "description": "Sample Expression",
+          "BatcherUID": {
+            "translated-name": "BatcherUID",
+            "description": "UID of the LumenBatch instance currently rendering this light, or -1.",
             "params": {}
           },
-          "Expression": {
-            "translated-name": "Expression",
-            "description": "Sample Expression",
+          "CountVisibleObjects": {
+            "translated-name": "CountVisibleObjects",
+            "description": "Number of currently visible detection-tagged objects.",
             "params": {}
           },
-          "SampleExpression": {
-            "translated-name": "SampleExpression",
-            "description": "This is a sample expression",
+          "GetVisibleObjectUID": {
+            "translated-name": "GetVisibleObjectUID",
+            "description": "UID of a visible object by index.",
+            "params": {
+              "index": {
+                "name": "Index",
+                "desc": "Visible object index."
+              }
+            }
+          },
+          "LoSEntrantUID": {
+            "translated-name": "LoSEntrantUID",
+            "description": "UID of the object that just entered line of sight.",
+            "params": {}
+          },
+          "LoSExitantUID": {
+            "translated-name": "LoSExitantUID",
+            "description": "UID of the object that just left line of sight.",
+            "params": {}
+          },
+          "RayHitAngle": {
+            "translated-name": "RayHitAngle",
+            "description": "Angle in degrees of the current ray hit.",
+            "params": {}
+          },
+          "RayHitUID": {
+            "translated-name": "RayHitUID",
+            "description": "UID of the obstacle hit by the current ray.",
+            "params": {}
+          },
+          "RayHitX": {
+            "translated-name": "RayHitX",
+            "description": "World X of the current ray hit.",
+            "params": {}
+          },
+          "RayHitY": {
+            "translated-name": "RayHitY",
+            "description": "World Y of the current ray hit.",
+            "params": {}
+          },
+          "ActiveFacingAngle": {
+            "translated-name": "ActiveFacingAngle",
+            "description": "Current facing angle offset in degrees.",
+            "params": {}
+          },
+          "ActiveLightRadius": {
+            "translated-name": "ActiveLightRadius",
+            "description": "Current line-of-sight range in pixels.",
+            "params": {}
+          },
+          "ActiveObstacleMode": {
+            "translated-name": "ActiveObstacleMode",
+            "description": "Current obstacle mode key.",
+            "params": {}
+          },
+          "ActiveObstacleTag": {
+            "translated-name": "ActiveObstacleTag",
+            "description": "Current primary obstacle tag, or an empty string outside tag mode.",
+            "params": {}
+          },
+          "ActiveRayArc": {
+            "translated-name": "ActiveRayArc",
+            "description": "Current cone of view in degrees.",
+            "params": {}
+          },
+          "CountObstacleObjects": {
+            "translated-name": "CountObstacleObjects",
+            "description": "Number of registered custom obstacle object types.",
+            "params": {}
+          },
+          "CountPolyPoints": {
+            "translated-name": "CountPolyPoints",
+            "description": "Number of points in the current visibility polygon.",
+            "params": {}
+          },
+          "GetPolyHitUID": {
+            "translated-name": "GetPolyHitUID",
+            "description": "UID hit by a visibility polygon point, or -1 if unobstructed.",
+            "params": {
+              "index": {
+                "name": "Index",
+                "desc": "Polygon point index."
+              }
+            }
+          },
+          "GetPolyPointAngle": {
+            "translated-name": "GetPolyPointAngle",
+            "description": "Angle in degrees of a visibility polygon point.",
+            "params": {
+              "index": {
+                "name": "Index",
+                "desc": "Polygon point index."
+              }
+            }
+          },
+          "GetPolyPointDist": {
+            "translated-name": "GetPolyPointDist",
+            "description": "Distance from the origin to a visibility polygon point.",
+            "params": {
+              "index": {
+                "name": "Index",
+                "desc": "Polygon point index."
+              }
+            }
+          },
+          "GetPolyPointX": {
+            "translated-name": "GetPolyPointX",
+            "description": "World X of a visibility polygon point.",
+            "params": {
+              "index": {
+                "name": "Index",
+                "desc": "Polygon point index."
+              }
+            }
+          },
+          "GetPolyPointY": {
+            "translated-name": "GetPolyPointY",
+            "description": "World Y of a visibility polygon point.",
+            "params": {
+              "index": {
+                "name": "Index",
+                "desc": "Polygon point index."
+              }
+            }
+          },
+          "LastPolygonUpdateTime": {
+            "translated-name": "LastPolygonUpdateTime",
+            "description": "Runtime timestamp of the most recent polygon update.",
+            "params": {}
+          },
+          "PolygonArea": {
+            "translated-name": "PolygonArea",
+            "description": "Approximate area of the current visibility polygon.",
             "params": {}
           }
         }
