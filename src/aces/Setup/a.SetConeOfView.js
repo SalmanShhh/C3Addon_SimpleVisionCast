@@ -1,7 +1,7 @@
 export const config = {
   listName: "Set cone of view",
   displayText: "Set cone of view to {0} degrees",
-  description: "Set the angular sweep of the visibility cone.",
+  description: "The angle range in degrees relative to the object angle that line-of-sight can cover.",
   params: [
     {
       id: "arc",
@@ -16,5 +16,5 @@ export const config = {
 export const expose = true;
 
 export default function (arc) {
-  this._setRayArc(arc);
+  this._setConeOfView(arc);
 }

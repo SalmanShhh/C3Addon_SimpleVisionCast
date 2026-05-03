@@ -1,12 +1,12 @@
 export const config = {
   listName: "Add obstacle tag",
   displayText: "Add obstacle tag {0}",
-  description: "Add a secondary obstacle tag in tag mode.",
+  description: "Add obstacle tags in tag mode. Use commas to add multiple tags.",
   params: [
     {
       id: "tag",
       name: "Tag",
-      desc: "Tag to add.",
+      desc: "Tag or comma-separated tags to add.",
       type: "string",
       initialValue: '"wall"',
     },

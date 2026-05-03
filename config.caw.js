@@ -42,7 +42,6 @@ export const files = {
 export const aceCategories = {
   Setup: "Setup",
   Mesh: "Mesh",
-  Detection: "Detection",
   Visibility: "Visibility",
   State: "State",
   Performance: "Performance",
@@ -153,11 +152,11 @@ export const properties = [
     type: PROPERTY_TYPE.INTEGER,
     id: "meshUpdateInterval",
     options: {
-      initialValue: 1,
-      minValue: 1,
+      initialValue: 0,
+      minValue: 0,
     },
     name: "Mesh update interval",
-    desc: "How often mesh deformation is written. 1 = every frame. Higher values stagger writes across frames for better performance with many lights.",
+    desc: "How many frames to skip between mesh writes. 0 = every frame, 1 = skip 1 frame, 2 = skip 2 frames.",
   },
   {
     type: PROPERTY_TYPE.COMBO,

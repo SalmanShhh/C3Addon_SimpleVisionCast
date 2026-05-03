@@ -1,12 +1,12 @@
 export const config = {
   listName: "Set obstacle tag",
   displayText: "Set obstacle tag to {0}",
-  description: "Replace the primary obstacle tag used in tag mode.",
+  description: "Set active obstacle tags in tag mode. Use commas to provide multiple tags.",
   params: [
     {
       id: "tag",
       name: "Tag",
-      desc: "Primary obstacle tag.",
+      desc: "Obstacle tag or comma-separated tags.",
       type: "string",
       initialValue: '"wall"',
     },

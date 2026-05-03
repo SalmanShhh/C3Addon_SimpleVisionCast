@@ -1,12 +1,12 @@
 export const config = {
   listName: "Set range",
-  displayText: "Set line of sight range to {0}",
-  description: "Set the maximum ray distance in pixels.",
+  displayText: "Set range to {0}",
+  description: "The maximum distance in pixels that line-of-sight can cover.",
   params: [
     {
       id: "radius",
       name: "Range",
-      desc: "Maximum visibility radius.",
+      desc: "Maximum range in pixels.",
       type: "number",
       initialValue: "300",
     },
@@ -16,5 +16,5 @@ export const config = {
 export const expose = true;
 
 export default function (radius) {
-  this._setLightRadius(radius);
+  this._setRange(radius);
 }

@@ -8,7 +8,6 @@
         "description": "Mesh-driven line of sight and dynamic lighting for world objects.",
         "help-url": "https://www.construct.net",
         "aceCategories": {
-          "Detection": "Detection",
           "Mesh": "Mesh",
           "Performance": "Performance",
           "Setup": "Setup",
@@ -47,7 +46,7 @@
           },
           "meshUpdateInterval": {
             "name": "Mesh update interval",
-            "desc": "How often mesh deformation is written. 1 = every frame. Higher values stagger writes across frames for better performance with many lights."
+            "desc": "How many frames to skip between mesh writes. 0 = every frame, 1 = skip 1 frame, 2 = skip 2 frames."
           },
           "meshStaggerMode": {
             "name": "Mesh stagger mode",
@@ -63,18 +62,6 @@
           }
         },
         "actions": {
-          "ClearDetectedObjects": {
-            "list-name": "Clear detected objects",
-            "display-text": "Clear detected objects",
-            "description": "Clear the cached visible set used for enter and exit events.",
-            "params": {}
-          },
-          "ForceDetectionSweep": {
-            "list-name": "Force detection sweep",
-            "display-text": "Force detection sweep",
-            "description": "Immediately test all detection-tagged objects against the current polygon.",
-            "params": {}
-          },
           "DisableMeshDeform": {
             "list-name": "Disable mesh deform",
             "display-text": "Disable mesh deform",
@@ -95,7 +82,7 @@
           },
           "SetMeshPinOrigin": {
             "list-name": "Set mesh pin origin",
-            "display-text": "Set mesh pin origin to <b>{0}</b>, <b>{1}</b>",
+            "display-text": "Set mesh pin origin to {0}, {1}",
             "description": "Move the mesh fan origin in normalized host space.",
             "params": {
               "x": {
@@ -137,11 +124,11 @@
           "SetMeshUpdateInterval": {
             "list-name": "Set mesh update interval",
             "display-text": "Set mesh update interval to {0} frame(s)",
-            "description": "Set how many frames to skip between mesh writes. 1 = every frame. Higher values reduce GPU overhead when many instances share a scene.",
+            "description": "Set how many frames to skip between mesh writes. 0 = every frame, 1 = skip 1 frame, 2 = skip 2 frames.",
             "params": {
               "interval": {
                 "name": "Interval",
-                "desc": "Frames between mesh writes (1 = every frame, 2+ = skip frames)"
+                "desc": "Frames to skip between mesh writes (0 = every frame)"
               }
             }
           },
@@ -181,11 +168,11 @@
           "AddObstacleTag": {
             "list-name": "Add obstacle tag",
             "display-text": "Add obstacle tag {0}",
-            "description": "Add a secondary obstacle tag in tag mode.",
+            "description": "Add obstacle tags in tag mode. Use commas to add multiple tags.",
             "params": {
               "tag": {
                 "name": "Tag",
-                "desc": "Tag to add."
+                "desc": "Tag or comma-separated tags to add."
               }
             }
           },
@@ -209,22 +196,33 @@
           "RemoveObstacleTag": {
             "list-name": "Remove obstacle tag",
             "display-text": "Remove obstacle tag {0}",
-            "description": "Remove a tag from the active obstacle tag set.",
+            "description": "Remove obstacle tags from the active obstacle tag set. Use commas to remove multiple tags.",
             "params": {
               "tag": {
                 "name": "Tag",
-                "desc": "Tag to remove."
+                "desc": "Tag or comma-separated tags to remove."
               }
             }
           },
-          "SetLightRadius": {
-            "list-name": "Set range",
-            "display-text": "Set line of sight range to {0}",
-            "description": "Set the maximum ray distance in pixels.",
+          "SetConeOfView": {
+            "list-name": "Set cone of view",
+            "display-text": "Set cone of view to {0} degrees",
+            "description": "The angle range in degrees relative to the object angle that line-of-sight can cover.",
             "params": {
-              "radius": {
-                "name": "Range",
-                "desc": "Maximum visibility radius."
+              "arc": {
+                "name": "Cone of view",
+                "desc": "Arc in degrees."
+              }
+            }
+          },
+          "SetFacingAngle": {
+            "list-name": "Set facing angle",
+            "display-text": "Set facing angle offset to <b>{0}</b>",
+            "description": "Set the cone angle offset relative to the host object.",
+            "params": {
+              "angle": {
+                "name": "Angle",
+                "desc": "Facing angle offset in degrees."
               }
             }
           },
@@ -247,22 +245,33 @@
           "SetObstacleTag": {
             "list-name": "Set obstacle tag",
             "display-text": "Set obstacle tag to {0}",
-            "description": "Replace the primary obstacle tag used in tag mode.",
+            "description": "Set active obstacle tags in tag mode. Use commas to provide multiple tags.",
             "params": {
               "tag": {
                 "name": "Tag",
-                "desc": "Primary obstacle tag."
+                "desc": "Obstacle tag or comma-separated tags."
               }
             }
           },
-          "SetRayArc": {
-            "list-name": "Set cone of view",
-            "display-text": "Set cone of view to {0} degrees",
-            "description": "Set the angular sweep of the visibility cone.",
+          "SetRange": {
+            "list-name": "Set range",
+            "display-text": "Set range to {0}",
+            "description": "The maximum distance in pixels that line-of-sight can cover.",
             "params": {
-              "arc": {
-                "name": "Cone of view",
-                "desc": "Arc in degrees."
+              "radius": {
+                "name": "Range",
+                "desc": "Maximum range in pixels."
+              }
+            }
+          },
+          "SetRayCount": {
+            "list-name": "Set ray count",
+            "display-text": "Set ray count to {0}",
+            "description": "Set the number of primary rays cast each update.",
+            "params": {
+              "count": {
+                "name": "Ray count",
+                "desc": "Primary ray count."
               }
             }
           },
@@ -290,18 +299,6 @@
           }
         },
         "conditions": {
-          "OnObjectEnterLoS": {
-            "list-name": "On object enter line of sight",
-            "display-text": "On object enter line of sight",
-            "description": "Triggered when a detection-tagged object becomes visible.",
-            "params": {}
-          },
-          "OnObjectExitLoS": {
-            "list-name": "On object leave line of sight",
-            "display-text": "On object leave line of sight",
-            "description": "Triggered when a detection-tagged object is no longer visible.",
-            "params": {}
-          },
           "OnRaycastBudgetExceeded": {
             "list-name": "On raycast budget exceeded",
             "display-text": "On raycast took longer than {0} ms",
@@ -375,17 +372,6 @@
             "description": "Triggered after the primary obstacle tag changes in tag mode.",
             "params": {}
           },
-          "IsObjectInLoS": {
-            "list-name": "Has line of sight to object",
-            "display-text": "Has line of sight to {0}",
-            "description": "Check whether any instance of the given object is currently inside the visibility polygon.",
-            "params": {
-              "object": {
-                "name": "Object",
-                "desc": "Object to test."
-              }
-            }
-          },
           "IsPointInVisibility": {
             "list-name": "Is point in visibility",
             "display-text": "Point {0}, {1} is in visibility",
@@ -412,65 +398,9 @@
             "display-text": "On polygon updated",
             "description": "Triggered after the visibility polygon is recomputed.",
             "params": {}
-          },
-          "OnRayHit": {
-            "list-name": "On ray hit",
-            "display-text": "On ray hit {0}",
-            "description": "Triggered for each primary ray that hits an obstacle.",
-            "params": {
-              "tag": {
-                "name": "Tag",
-                "desc": "Optional tag filter in tag obstacle mode."
-              }
-            }
           }
         },
         "expressions": {
-          "CountVisibleObjects": {
-            "translated-name": "CountVisibleObjects",
-            "description": "Number of currently visible detection-tagged objects.",
-            "params": {}
-          },
-          "GetVisibleObjectUID": {
-            "translated-name": "GetVisibleObjectUID",
-            "description": "UID of a visible object by index.",
-            "params": {
-              "index": {
-                "name": "Index",
-                "desc": "Visible object index."
-              }
-            }
-          },
-          "LoSEntrantUID": {
-            "translated-name": "LoSEntrantUID",
-            "description": "UID of the object that just entered line of sight.",
-            "params": {}
-          },
-          "LoSExitantUID": {
-            "translated-name": "LoSExitantUID",
-            "description": "UID of the object that just left line of sight.",
-            "params": {}
-          },
-          "RayHitAngle": {
-            "translated-name": "RayHitAngle",
-            "description": "Angle in degrees of the current ray hit.",
-            "params": {}
-          },
-          "RayHitUID": {
-            "translated-name": "RayHitUID",
-            "description": "UID of the obstacle hit by the current ray.",
-            "params": {}
-          },
-          "RayHitX": {
-            "translated-name": "RayHitX",
-            "description": "World X of the current ray hit.",
-            "params": {}
-          },
-          "RayHitY": {
-            "translated-name": "RayHitY",
-            "description": "World Y of the current ray hit.",
-            "params": {}
-          },
           "ActiveMeshStaggerMode": {
             "translated-name": "ActiveMeshStaggerMode",
             "description": "Current mesh stagger mode key: \"stable\" or \"hybrid\".",
@@ -478,7 +408,7 @@
           },
           "ActiveMeshUpdateInterval": {
             "translated-name": "ActiveMeshUpdateInterval",
-            "description": "Current mesh write interval in frames.",
+            "description": "Current number of frames skipped between mesh writes (0 = every frame).",
             "params": {}
           },
           "ActiveMeshUpdateIntervalTime": {
@@ -501,14 +431,14 @@
             "description": "Number of obstacle instances that were considered in the most recent vision rebuild. Reflects any active candidate cap.",
             "params": {}
           },
+          "ActiveConeOfView": {
+            "translated-name": "ActiveConeOfView",
+            "description": "The angle range in degrees relative to the object angle that line-of-sight can cover.",
+            "params": {}
+          },
           "ActiveFacingAngle": {
             "translated-name": "ActiveFacingAngle",
             "description": "Current facing angle offset in degrees.",
-            "params": {}
-          },
-          "ActiveLightRadius": {
-            "translated-name": "ActiveLightRadius",
-            "description": "Current line-of-sight range in pixels.",
             "params": {}
           },
           "ActiveObstacleMode": {
@@ -521,9 +451,9 @@
             "description": "Current primary obstacle tag, or an empty string outside tag mode.",
             "params": {}
           },
-          "ActiveRayArc": {
-            "translated-name": "ActiveRayArc",
-            "description": "Current cone of view in degrees.",
+          "ARange": {
+            "translated-name": "ARange",
+            "description": "The maximum distance in pixels that line-of-sight can cover.",
             "params": {}
           },
           "CountObstacleObjects": {
@@ -594,36 +524,6 @@
           "PolygonArea": {
             "translated-name": "PolygonArea",
             "description": "Approximate area of the current visibility polygon.",
-            "params": {}
-          },
-          "RayHitNormalAngle": {
-            "translated-name": "RayHitNormalAngle",
-            "description": "Angle in degrees of the surface normal at the current ray hit point (0-360). Valid inside On ray hit.",
-            "params": {}
-          },
-          "RayHitNormalX": {
-            "translated-name": "RayHitNormalX",
-            "description": "X component of the surface normal at the current ray hit point (-1 to 1). Valid inside On ray hit.",
-            "params": {}
-          },
-          "RayHitNormalY": {
-            "translated-name": "RayHitNormalY",
-            "description": "Y component of the surface normal at the current ray hit point (-1 to 1). Valid inside On ray hit.",
-            "params": {}
-          },
-          "RayHitReflectAngle": {
-            "translated-name": "RayHitReflectAngle",
-            "description": "Angle in degrees of the reflected ray direction (0-360). Valid inside On ray hit.",
-            "params": {}
-          },
-          "RayHitReflectX": {
-            "translated-name": "RayHitReflectX",
-            "description": "World X of the reflected ray endpoint. Computed from the hit point along the reflected direction for the remaining radius distance. Valid inside On ray hit.",
-            "params": {}
-          },
-          "RayHitReflectY": {
-            "translated-name": "RayHitReflectY",
-            "description": "World Y of the reflected ray endpoint. Computed from the hit point along the reflected direction for the remaining radius distance. Valid inside On ray hit.",
             "params": {}
           }
         }

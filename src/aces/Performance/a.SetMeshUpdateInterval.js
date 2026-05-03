@@ -2,7 +2,7 @@ export const config = {
   listName: "Set mesh update interval",
   displayText: "Set mesh update interval to {0} frame(s)",
   description:
-    "Set how many frames to skip between mesh writes. 1 = every frame. Higher values reduce GPU overhead when many instances share a scene.",
+    "Set how many frames to skip between mesh writes. 0 = every frame, 1 = skip 1 frame, 2 = skip 2 frames.",
   isAsync: false,
   highlight: false,
   deprecated: false,
@@ -10,9 +10,9 @@ export const config = {
     {
       id: "interval",
       name: "Interval",
-      desc: "Frames between mesh writes (1 = every frame, 2+ = skip frames)",
+      desc: "Frames to skip between mesh writes (0 = every frame)",
       type: "number",
-      initialValue: "1",
+      initialValue: "0",
     },
   ],
 };

@@ -1,6 +1,6 @@
 export const config = {
   returnType: "number",
-  description: "Current mesh write interval in frames.",
+  description: "Current number of frames skipped between mesh writes (0 = every frame).",
   params: [],
 };
 

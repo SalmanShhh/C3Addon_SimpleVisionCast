@@ -1,12 +1,12 @@
 export const config = {
   listName: "Remove obstacle tag",
   displayText: "Remove obstacle tag {0}",
-  description: "Remove a tag from the active obstacle tag set.",
+  description: "Remove obstacle tags from the active obstacle tag set. Use commas to remove multiple tags.",
   params: [
     {
       id: "tag",
       name: "Tag",
-      desc: "Tag to remove.",
+      desc: "Tag or comma-separated tags to remove.",
       type: "string",
       initialValue: '"wall"',
     },

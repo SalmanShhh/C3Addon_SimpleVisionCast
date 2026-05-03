@@ -18,5 +18,10 @@
     "added": "- Add ACEs to help with Performance\n- Debugger values now editable",
     "changed": "",
     "fixed": ""
+  },
+  "0.4.0.0": {
+    "added": "- Simplify the Addon More\n- support multiple obstacle tags with comma-separated tags\n- Add fix to mitigate movement jitter (this was so damn hard)",
+    "changed": "",
+    "fixed": ""
   }
 }

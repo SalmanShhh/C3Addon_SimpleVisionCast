@@ -17,42 +17,27 @@ export default function (parentClass) {
       this._rayArc = this._clamp(Number(properties[1]) || 360, 1, 360);
       this._rayDensity = this._clamp(Number(properties[2]) || 0.5, 0.01, 1);
       this._obstacleMode = this._combo(properties[3], OBSTACLE_MODES);
-      this._primaryObstacleTag = typeof properties[4] === "string" ? properties[4] : "wall";
-      this._detectionTag = "";
+      const initialObstacleTags = this._parseTagList(
+        typeof properties[4] === "string" ? properties[4] : "wall"
+      );
+      this._primaryObstacleTag = initialObstacleTags[0] || "";
       this._meshDeformEnabled = properties[5] !== undefined ? !!properties[5] : true;
-      this._meshUpdateInterval = this._clamp(Math.floor(Number(properties[6]) || 1), 1, 8, 1);
+      this._meshUpdateInterval = this._clamp(Math.floor(Number(properties[6]) || 0), 0, 8, 0);
       this._meshStaggerMode = this._combo(properties[7], STAGGER_MODES);
       this._meshUpdateCounter = 0;
       this._meshUpdatePhase = 0;
 
-      this._obstacleTagSet = new Set();
-      if (this._primaryObstacleTag) {
-        this._obstacleTagSet.add(this._primaryObstacleTag);
-      }
+      this._obstacleTagSet = new Set(initialObstacleTags);
 
       // obstacle objects tracked by display name (stable across save/load)
       this._obstacleObjectRefs = new Map();
 
       this._polyPoints = [];
-      this._visibleSet = new Set();
-      this._visibleList = [];
+      this._meshPolyPoints = [];
+      this._lastObstacleCandidates = [];
 
       this._pinNormX = 0.5;
       this._pinNormY = 0.5;
-
-      this._currentEntrant = -1;
-      this._currentExitant = -1;
-      this._currentRayHit = {
-        uid: -1,
-        x: 0,
-        y: 0,
-        angle: 0,
-        instance: null,
-        normalX: 0,
-        normalY: 0,
-        reflectX: 0,
-        reflectY: 0,
-      };
 
       this._meshApi = null;
       this._meshSizeApi = null;
@@ -62,7 +47,6 @@ export default function (parentClass) {
       this._meshReady = false;
       this._meshNotReadyReported = false;
 
-      this._needsDetectionSweep = true;
       this._lastPolygonUpdateTime = 0;
       this._lastRaycastMs = 0;
       this._obstacleCandidateCount = 0;
@@ -78,16 +62,20 @@ export default function (parentClass) {
 
       // Use post-events tick so event-sheet angle changes are reflected this frame.
       this._setTicking2(true);
+
+      this._didRebuildVisionThisFrame = false;
     }
 
     onCreate() {
       const uid = this._getUID(this.instance);
-      this._meshUpdatePhase = uid === -1 ? 0 : (Math.abs(uid) % this._meshUpdateInterval);
+      const period = this._meshUpdateInterval + 1;
+      this._meshUpdatePhase = uid === -1 ? 0 : (Math.abs(uid) % period);
       this._refreshMeshDimensions();
     }
 
     _updateVisionFrame() {
       const shouldWriteMesh = this._shouldWriteMeshThisFrame();
+      this._didRebuildVisionThisFrame = false;
 
       let shouldUpdateVision;
       if (this._raycastSkipRate >= 2) {
@@ -103,8 +91,10 @@ export default function (parentClass) {
         if (this._maxObstacleCandidates > 0 && candidates.length > this._maxObstacleCandidates) {
           candidates = candidates.slice(0, this._maxObstacleCandidates);
         }
+        this._lastObstacleCandidates = candidates;
         this._obstacleCandidateCount = candidates.length;
         this._rebuildVisibilityPolygon(candidates);
+        this._didRebuildVisionThisFrame = true;
         this._lastRaycastMs = performance.now() - raycastStart;
         this._lastPolygonUpdateTime = this._getRuntimeTime();
         this._trigger("OnPolygonUpdated");
@@ -115,10 +105,6 @@ export default function (parentClass) {
         this._writePolygonToMesh();
       }
 
-       if (this._needsDetectionSweep) {
-        this._runDetectionSweep();
-        this._needsDetectionSweep = false;
-      }
     }
 
     _tick() {
@@ -196,13 +182,15 @@ export default function (parentClass) {
       this._obstacleMode = OBSTACLE_MODES.includes(o?.obstacleMode)
         ? o.obstacleMode
         : this._obstacleMode;
-      this._obstacleTagSet = new Set(Array.isArray(o?.obstacleTags) ? o.obstacleTags : []);
-      this._primaryObstacleTag = typeof o?.primaryObstacleTag === "string"
-        ? o.primaryObstacleTag
-        : this._primaryObstacleTag;
-      if (this._primaryObstacleTag) {
-        this._obstacleTagSet.add(this._primaryObstacleTag);
-      }
+      const savedTags = Array.isArray(o?.obstacleTags)
+        ? o.obstacleTags.flatMap((t) => this._parseTagList(t))
+        : [];
+      const primaryTags = this._parseTagList(
+        typeof o?.primaryObstacleTag === "string" ? o.primaryObstacleTag : this._primaryObstacleTag
+      );
+      const mergedTags = [...savedTags, ...primaryTags];
+      this._obstacleTagSet = new Set(mergedTags);
+      this._primaryObstacleTag = mergedTags[0] || "";
       this._lightRadius = Math.max(0, Number(o?.lightRadius) || this._lightRadius);
       this._rayArc = this._clamp(Number(o?.rayArc) || this._rayArc, 1, 360);
       this._rayDensity = this._clamp(Number(o?.rayDensity) || this._rayDensity, 0.01, 1);
@@ -219,9 +207,6 @@ export default function (parentClass) {
       this._setRaycastSkipRate(Number(o?.raycastSkipRate) || 0);
       this._maxObstacleCandidates = Math.max(0, Math.floor(Number(o?.maxObstacleCandidates) || 0));
       this._setMeshUpdateIntervalTime(Number(o?.meshUpdateIntervalTime) || 0);
-      this._visibleSet.clear();
-      this._visibleList = [];
-      this._needsDetectionSweep = true;
       this._obstacleObjectRefs.clear();
       // Restore custom obstacle objects by name via runtime.objects
       const runtime = this._getRuntime();
@@ -249,16 +234,37 @@ export default function (parentClass) {
     }
 
     _setMeshUpdateInterval(interval) {
-      const nextInterval = this._clamp(Math.floor(Number(interval) || this._meshUpdateInterval), 1, 8, 1);
+      const numericInterval = Number(interval);
+      const nextInterval = Number.isFinite(numericInterval)
+        ? this._clamp(Math.floor(numericInterval), 0, 8, 0)
+        : this._meshUpdateInterval;
       this._meshUpdateInterval = nextInterval;
       this._meshUpdateCounter = 0;
+      const period = this._meshUpdateInterval + 1;
       const uid = this._getUID(this.instance);
-      this._meshUpdatePhase = uid === -1 ? 0 : (Math.abs(uid) % this._meshUpdateInterval);
+      this._meshUpdatePhase = uid === -1 ? 0 : (Math.abs(uid) % period);
     }
 
     _setMeshUpdateIntervalTime(seconds) {
       this._meshUpdateIntervalTime = Math.max(0, Number(seconds) || 0);
       this._meshUpdateTimeAccumulator = 0;
+    }
+
+    _parseTagList(value) {
+      const raw = String(value || "");
+      if (!raw) {
+        return [];
+      }
+
+      const unique = new Set();
+      for (const part of raw.split(",")) {
+        const tag = String(part || "").trim();
+        if (tag) {
+          unique.add(tag);
+        }
+      }
+
+      return Array.from(unique);
     }
 
     _shouldWriteMeshThisFrame() {
@@ -273,11 +279,12 @@ export default function (parentClass) {
       }
 
       this._meshUpdateCounter++;
-      if (this._meshUpdateInterval <= 1) {
+      if (this._meshUpdateInterval <= 0) {
         return true;
       }
 
-      return ((this._meshUpdateCounter + this._meshUpdatePhase) % this._meshUpdateInterval) === 0;
+      const period = this._meshUpdateInterval + 1;
+      return ((this._meshUpdateCounter + this._meshUpdatePhase) % period) === 0;
     }
 
     _combo(value, keys) {
@@ -910,7 +917,9 @@ export default function (parentClass) {
       const arc = this._rayArc;
       const rayCount = this._calculateRayCount();
       const isFullCircle = arc >= 360;
-      const startAngle = this._normalizeAngle(centerAngle - (arc / 2));
+      const startAngle = isFullCircle
+        ? 0
+        : this._normalizeAngle(centerAngle - (arc / 2));
       const angleMap = new Map();
 
       const addAngle = (angle, isPrimary) => {
@@ -1073,61 +1082,11 @@ export default function (parentClass) {
         const hit = this._castRay(ray.angle, candidates);
         rawPolyPoints.push(hit);
 
-        if (ray.isPrimary && hit.hitUID !== -1) {
-          this._currentRayHit.uid = hit.hitUID;
-          this._currentRayHit.x = hit.x;
-          this._currentRayHit.y = hit.y;
-          this._currentRayHit.angle = hit.angle;
-          this._currentRayHit.instance = hit.hitInstance;
-          this._currentRayHit.normalX = hit.normalX;
-          this._currentRayHit.normalY = hit.normalY;
-          this._currentRayHit.reflectX = hit.reflectX;
-          this._currentRayHit.reflectY = hit.reflectY;
-          this._trigger("OnRayHit");
-        }
+
       }
 
       this._polyPoints = rawPolyPoints;
-    }
-
-    _runDetectionSweep() {
-      if (!this._detectionTag) {
-        this._visibleSet.clear();
-        this._visibleList = [];
-        return;
-      }
-
-      const previousVisible = new Set(this._visibleSet);
-      const nextVisible = new Set();
-      const nextVisibleList = [];
-      const candidates = this._collectTaggedInstances(this._detectionTag);
-
-      for (const instance of candidates) {
-        const uid = this._getUID(instance);
-        if (uid === -1) {
-          continue;
-        }
-
-        if (this._isPointInPolygon(Number(instance.x) || 0, Number(instance.y) || 0)) {
-          nextVisible.add(uid);
-          nextVisibleList.push(uid);
-
-          if (!previousVisible.has(uid)) {
-            this._currentEntrant = uid;
-            this._trigger("OnObjectEnterLoS");
-          }
-        }
-      }
-
-      for (const uid of previousVisible) {
-        if (!nextVisible.has(uid)) {
-          this._currentExitant = uid;
-          this._trigger("OnObjectExitLoS");
-        }
-      }
-
-      this._visibleSet = nextVisible;
-      this._visibleList = nextVisibleList;
+      this._meshPolyPoints = rawPolyPoints;
     }
 
     _isPointInPolygon(x, y) {
@@ -1551,35 +1510,8 @@ export default function (parentClass) {
       };
     }
 
-    _samplePolygonPointNormalized(t, isFullCircle) {
-      const count = this._polyPoints.length;
-      if (count <= 0) {
-        return null;
-      }
-      if (count === 1) {
-        return this._polyPoints[0];
-      }
-
-      if (isFullCircle) {
-        const scaled = t * count;
-        const i0 = Math.floor(scaled) % count;
-        const i1 = (i0 + 1) % count;
-        const frac = scaled - Math.floor(scaled);
-        const a = this._polyPoints[i0];
-        const b = this._polyPoints[i1];
-        return {
-          ...a,
-          x: a.x + ((b.x - a.x) * frac),
-          y: a.y + ((b.y - a.y) * frac),
-        };
-      }
-
-      const scaled = t * (count - 1);
-      const i0 = Math.floor(scaled);
-      const i1 = Math.min(count - 1, i0 + 1);
-      const frac = scaled - i0;
-      const a = this._polyPoints[i0];
-      const b = this._polyPoints[i1];
+    _interpolatePolyPoints(a, b, t) {
+      const frac = this._clamp(Number(t), 0, 1, 0);
       return {
         ...a,
         x: a.x + ((b.x - a.x) * frac),
@@ -1587,10 +1519,99 @@ export default function (parentClass) {
       };
     }
 
+    _samplePolygonPointByAngle(t, isFullCircle, points = this._polyPoints) {
+      const count = points.length;
+      if (count <= 0) {
+        return null;
+      }
+      if (count === 1) {
+        return points[0];
+      }
+
+      // Full circle keeps a seam wrap and interpolates over all segments.
+      if (isFullCircle) {
+        const scaled = t * count;
+        const i0 = Math.floor(scaled) % count;
+        const i1 = (i0 + 1) % count;
+        const frac = scaled - Math.floor(scaled);
+        return this._interpolatePolyPoints(points[i0], points[i1], frac);
+      }
+
+      // Sample by angular position to avoid bending artifacts at sparse/clustered indices.
+      const first = points[0];
+      const last = points[count - 1];
+      const totalSpan = this._angleDistance(last.angle, first.angle);
+      if (totalSpan <= 1e-6) {
+        const scaled = t * (count - 1);
+        const i0 = Math.floor(scaled);
+        const i1 = Math.min(count - 1, i0 + 1);
+        const frac = scaled - i0;
+        return this._interpolatePolyPoints(points[i0], points[i1], frac);
+      }
+
+      const clampedT = this._clamp(Number(t), 0, 1, 0);
+      const startAngle = first.angle;
+      const targetAngle = this._normalizeAngle(startAngle + (totalSpan * clampedT));
+      const targetDist = this._angleDistance(targetAngle, startAngle);
+
+      let prev = points[0];
+      let prevDist = 0;
+      for (let i = 1; i < count; i++) {
+        const next = points[i];
+        const nextDist = this._angleDistance(next.angle, startAngle);
+        if (targetDist <= nextDist) {
+          const span = Math.max(1e-8, nextDist - prevDist);
+          const frac = (targetDist - prevDist) / span;
+          return this._interpolatePolyPoints(prev, next, frac);
+        }
+        prev = next;
+        prevDist = nextDist;
+      }
+
+      return points[count - 1];
+    }
+
+    _samplePolygonPointByIndex(t, isFullCircle, points = this._polyPoints) {
+      const count = points.length;
+      if (count <= 0) {
+        return null;
+      }
+      if (count === 1) {
+        return points[0];
+      }
+
+      const clampedT = this._clamp(Number(t), 0, 1, 0);
+      if (isFullCircle) {
+        const scaled = clampedT * count;
+        const index = Math.floor(scaled) % count;
+        return points[index];
+      }
+
+      const index = Math.round(clampedT * (count - 1));
+      return points[this._clamp(index, 0, count - 1, 0)];
+    }
+
+    _getMeshSampleAngle(col, boundaryCols, isFullCircle) {
+      const centerAngle = this._getFacingAngleDegrees();
+      if (boundaryCols <= 1) {
+        return isFullCircle ? 0 : centerAngle;
+      }
+
+      const t = this._clamp(col / (boundaryCols - 1), 0, 1, 0);
+      if (isFullCircle) {
+        const startAngle = 0;
+        return this._normalizeAngle(startAngle + (360 * t));
+      }
+
+      const startAngle = this._normalizeAngle(centerAngle - (this._rayArc / 2));
+      return this._normalizeAngle(startAngle + (this._rayArc * t));
+    }
+
     _writePolygonToMesh() {
       this._ensureHostCoverageForRange();
+      const meshPoints = this._polyPoints;
 
-      if (!this._ensureMeshDimensions(this._polyPoints.length || this._calculateRayCount(), 2)) {
+      if (!this._ensureMeshDimensions(meshPoints.length || this._calculateRayCount(), 2)) {
         if (!this._meshNotReadyReported) {
           this._meshNotReadyReported = true;
           this._trigger("OnMeshNotReady");
@@ -1599,7 +1620,7 @@ export default function (parentClass) {
       }
 
       this._meshNotReadyReported = false;
-      if (!this._polyPoints.length) {
+      if (!meshPoints.length) {
         return;
       }
 
@@ -1613,13 +1634,13 @@ export default function (parentClass) {
       for (let col = 0; col < boundaryCols; col++) {
         let sample = null;
         if (boundaryCols <= 1) {
-          sample = this._polyPoints[0];
+          sample = meshPoints[0];
         } else if (isFullCircle && col === boundaryCols - 1) {
           // Close the 360-degree seam by forcing the last edge vertex to match the first.
-          sample = this._polyPoints[0];
+          sample = meshPoints[0];
         } else {
           const t = col / (boundaryCols - 1);
-          sample = this._samplePolygonPointNormalized(t, isFullCircle);
+          sample = this._samplePolygonPointByIndex(t, isFullCircle, meshPoints);
         }
 
         if (!sample) {
@@ -1627,10 +1648,11 @@ export default function (parentClass) {
         }
 
         const meshPoint = this._worldToHostMeshPoint(sample.x, sample.y);
+
         this._meshSetPoint(col, 0, {
           mode: "absolute",
-          x: meshPoint.x,
-          y: meshPoint.y,
+          x: this._clamp(meshPoint.x, -0.25, 1.25, meshPoint.x),
+          y: this._clamp(meshPoint.y, -0.25, 1.25, meshPoint.y),
           u: boundaryCols <= 1 ? 0.5 : col / (boundaryCols - 1),
           v: 0,
         });
@@ -1712,11 +1734,9 @@ export default function (parentClass) {
     }
 
     _setObstacleTag(tag) {
-      this._primaryObstacleTag = String(tag || "");
-      this._obstacleTagSet = new Set();
-      if (this._primaryObstacleTag) {
-        this._obstacleTagSet.add(this._primaryObstacleTag);
-      }
+      const tags = this._parseTagList(tag);
+      this._primaryObstacleTag = tags[0] || "";
+      this._obstacleTagSet = new Set(tags);
 
       if (this._obstacleMode === "tag") {
         this._trigger("OnObstacleTagChanged");
@@ -1724,38 +1744,42 @@ export default function (parentClass) {
     }
 
     _addObstacleTag(tag) {
-      const nextTag = String(tag || "");
-      if (nextTag) {
+      const nextTags = this._parseTagList(tag);
+      for (const nextTag of nextTags) {
         this._obstacleTagSet.add(nextTag);
+        if (!this._primaryObstacleTag) {
+          this._primaryObstacleTag = nextTag;
+        }
       }
     }
 
     _removeObstacleTag(tag) {
-      const nextTag = String(tag || "");
-      if (!nextTag) {
+      const tagsToRemove = this._parseTagList(tag);
+      if (!tagsToRemove.length) {
         return;
       }
 
-      if (nextTag === this._primaryObstacleTag) {
-        this._primaryObstacleTag = "";
+      for (const nextTag of tagsToRemove) {
+        this._obstacleTagSet.delete(nextTag);
       }
-      this._obstacleTagSet.delete(nextTag);
+
+      if (!this._obstacleTagSet.has(this._primaryObstacleTag)) {
+        const fallbackTag = this._obstacleTagSet.values().next().value;
+        this._primaryObstacleTag = fallbackTag || "";
+      }
     }
 
-    _setLightRadius(radius) {
+    _setRange(radius) {
       this._lightRadius = Math.max(0, Number(radius) || 0);
-      this._needsDetectionSweep = true;
     }
 
-    _setRayArc(arc) {
+    _setConeOfView(arc) {
       this._rayArc = this._clamp(Number(arc) || this._rayArc, 1, 360);
-      this._needsDetectionSweep = true;
     }
 
     _setRayDensity(density) {
       // density is 0-1 (percent property convention)
       this._rayDensity = this._clamp(Number(density) || this._rayDensity, 0.01, 1);
-      this._needsDetectionSweep = true;
     }
 
     _enableMeshDeform() {
@@ -1776,24 +1800,11 @@ export default function (parentClass) {
       this._pinNormY = this._clamp(Number(y), 0, 1, this._pinNormY);
     }
 
-    _forceDetectionSweep() {
-      this._needsDetectionSweep = true;
-      this._runDetectionSweep();
-      this._needsDetectionSweep = false;
-    }
-
-    _clearDetectedObjects() {
-      this._visibleSet.clear();
-      this._visibleList = [];
-    }
-
     _isBatchRendered() {
       return false;
     }
 
-    _isObjectInLoS(uid) {
-      return this._visibleSet.has(Math.floor(Number(uid)));
-    }
+
 
     _isMeshDeformEnabled() {
       return this._meshDeformEnabled;
@@ -1813,7 +1824,8 @@ export default function (parentClass) {
     }
 
     _hasObstacleTag(tag) {
-      return this._obstacleMode === "tag" && this._obstacleTagSet.has(String(tag || ""));
+      const normalizedTag = String(tag || "").trim();
+      return this._obstacleMode === "tag" && this._obstacleTagSet.has(normalizedTag);
     }
 
     _hasObstacleObject(objectType) {
@@ -1854,64 +1866,7 @@ export default function (parentClass) {
       return this._getPolygonArea();
     }
 
-    _getLoSEntrantUID() {
-      return this._currentEntrant;
-    }
 
-    _getLoSExitantUID() {
-      return this._currentExitant;
-    }
-
-    _countVisibleObjects() {
-      return this._visibleList.length;
-    }
-
-    _getVisibleObjectUID(index) {
-      index = Math.floor(Number(index));
-      return this._visibleList[index] ?? -1;
-    }
-
-    _getRayHitUID() {
-      return this._currentRayHit.uid;
-    }
-
-    _getRayHitX() {
-      return this._currentRayHit.x;
-    }
-
-    _getRayHitY() {
-      return this._currentRayHit.y;
-    }
-
-    _getRayHitAngle() {
-      return this._currentRayHit.angle;
-    }
-
-    _getRayHitNormalX() {
-      return this._currentRayHit.normalX;
-    }
-
-    _getRayHitNormalY() {
-      return this._currentRayHit.normalY;
-    }
-
-    _getRayHitNormalAngle() {
-      return this._normalizeAngle(this._radToDeg(Math.atan2(this._currentRayHit.normalY, this._currentRayHit.normalX)));
-    }
-
-    _getRayHitReflectX() {
-      return this._currentRayHit.reflectX;
-    }
-
-    _getRayHitReflectY() {
-      return this._currentRayHit.reflectY;
-    }
-
-    _getRayHitReflectAngle() {
-      const dx = this._currentRayHit.reflectX - this._currentRayHit.x;
-      const dy = this._currentRayHit.reflectY - this._currentRayHit.y;
-      return this._normalizeAngle(this._radToDeg(Math.atan2(dy, dx)));
-    }
 
     _getBatcherUID() {
       return -1;
@@ -1933,11 +1888,11 @@ export default function (parentClass) {
       return Math.max(8, Math.ceil(this._rayArc * this._rayDensity));
     }
 
-    _getActiveLightRadius() {
+    _getActiveRange() {
       return this._lightRadius;
     }
 
-    _getActiveRayArc() {
+    _getActiveConeOfView() {
       return this._rayArc;
     }
 
@@ -1954,8 +1909,8 @@ export default function (parentClass) {
           properties: [
             { name: "$enabled", value: this._enabled, onedit: v => { this._setEnabled(v === "true" || v === true); } },
             { name: "$mode", value: this._obstacleMode },
-            { name: "$radius", value: this._lightRadius, onedit: v => { this._setLightRadius(+v); } },
-            { name: "$cone", value: this._rayArc, onedit: v => { this._setRayArc(+v); } },
+            { name: "$radius", value: this._lightRadius, onedit: v => { this._setRange(+v); } },
+            { name: "$cone", value: this._rayArc, onedit: v => { this._setConeOfView(+v); } },
             { name: "$rayCount", value: this._calculateRayCount() },
             { name: "$polyPoints", value: this._polyPoints.length },
             { name: "$tags", value: tags },

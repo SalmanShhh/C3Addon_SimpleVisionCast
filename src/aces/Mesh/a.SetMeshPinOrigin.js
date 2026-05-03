@@ -1,6 +1,6 @@
 export const config = {
   listName: "Set mesh pin origin",
-  displayText: "Set mesh pin origin to <b>{0}</b>, <b>{1}</b>",
+  displayText: "Set mesh pin origin to {0}, {1}",
   description: "Move the mesh fan origin in normalized host space.",
   params: [
     {
