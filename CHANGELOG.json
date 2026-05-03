@@ -13,5 +13,10 @@
     "added": "Now Works correctly.\n- Added Mesh Stagger Rendering \n- Added Ray Density\n",
     "changed": "",
     "fixed": "- Fixed Mesh Rendering.\n"
+  },
+  "0.3.0.0": {
+    "added": "- Add ACEs to help with Performance\n- Debugger values now editable",
+    "changed": "",
+    "fixed": ""
   }
 }

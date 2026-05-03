@@ -67,6 +67,13 @@ export default function (parentClass) {
       this._lastRaycastMs = 0;
       this._obstacleCandidateCount = 0;
 
+      // Performance controls
+      this._raycastSkipRate = 0;    // 0/1 = no skip; N>1 = rebuild every N frames
+      this._raycastSkipCounter = 0;
+      this._maxObstacleCandidates = 0; // 0 = unlimited
+      this._meshUpdateIntervalTime = 0; // 0 = use frame mode; >0 = seconds between mesh writes
+      this._meshUpdateTimeAccumulator = 0;
+
       this._enabled = properties[8] !== undefined ? !!properties[8] : true;
 
       // Use post-events tick so event-sheet angle changes are reflected this frame.
@@ -81,16 +88,27 @@ export default function (parentClass) {
 
     _updateVisionFrame() {
       const shouldWriteMesh = this._shouldWriteMeshThisFrame();
-      const shouldUpdateVision = this._meshStaggerMode === "hybrid" || shouldWriteMesh;
+
+      let shouldUpdateVision;
+      if (this._raycastSkipRate >= 2) {
+        this._raycastSkipCounter = (this._raycastSkipCounter + 1) % this._raycastSkipRate;
+        shouldUpdateVision = this._raycastSkipCounter === 0;
+      } else {
+        shouldUpdateVision = this._meshStaggerMode === "hybrid" || shouldWriteMesh;
+      }
 
       if (shouldUpdateVision) {
         const raycastStart = performance.now();
-        const candidates = this._collectObstacleCandidates();
+        let candidates = this._collectObstacleCandidates();
+        if (this._maxObstacleCandidates > 0 && candidates.length > this._maxObstacleCandidates) {
+          candidates = candidates.slice(0, this._maxObstacleCandidates);
+        }
         this._obstacleCandidateCount = candidates.length;
         this._rebuildVisibilityPolygon(candidates);
         this._lastRaycastMs = performance.now() - raycastStart;
         this._lastPolygonUpdateTime = this._getRuntimeTime();
         this._trigger("OnPolygonUpdated");
+        this._trigger("OnRaycastBudgetExceeded");
       }
 
       if (this._meshDeformEnabled && shouldWriteMesh) {
@@ -168,6 +186,9 @@ export default function (parentClass) {
         pinNormX: this._pinNormX,
         pinNormY: this._pinNormY,
         enabled: this._enabled,
+        raycastSkipRate: this._raycastSkipRate,
+        maxObstacleCandidates: this._maxObstacleCandidates,
+        meshUpdateIntervalTime: this._meshUpdateIntervalTime,
       };
     }
 
@@ -195,6 +216,9 @@ export default function (parentClass) {
       this._pinNormX = this._clamp(Number(o?.pinNormX), 0, 1, this._pinNormX);
       this._pinNormY = this._clamp(Number(o?.pinNormY), 0, 1, this._pinNormY);
       this._enabled = o?.enabled !== false;
+      this._setRaycastSkipRate(Number(o?.raycastSkipRate) || 0);
+      this._maxObstacleCandidates = Math.max(0, Math.floor(Number(o?.maxObstacleCandidates) || 0));
+      this._setMeshUpdateIntervalTime(Number(o?.meshUpdateIntervalTime) || 0);
       this._visibleSet.clear();
       this._visibleList = [];
       this._needsDetectionSweep = true;
@@ -211,6 +235,19 @@ export default function (parentClass) {
       this._refreshMeshDimensions();
     }
 
+    _setMeshStaggerMode(mode) {
+      this._meshStaggerMode = this._combo(mode, STAGGER_MODES);
+    }
+
+    _setRaycastSkipRate(rate) {
+      this._raycastSkipRate = Math.max(0, Math.floor(Number(rate) || 0));
+      this._raycastSkipCounter = 0;
+    }
+
+    _setMaxObstacleCandidates(count) {
+      this._maxObstacleCandidates = Math.max(0, Math.floor(Number(count) || 0));
+    }
+
     _setMeshUpdateInterval(interval) {
       const nextInterval = this._clamp(Math.floor(Number(interval) || this._meshUpdateInterval), 1, 8, 1);
       this._meshUpdateInterval = nextInterval;
@@ -219,7 +256,22 @@ export default function (parentClass) {
       this._meshUpdatePhase = uid === -1 ? 0 : (Math.abs(uid) % this._meshUpdateInterval);
     }
 
+    _setMeshUpdateIntervalTime(seconds) {
+      this._meshUpdateIntervalTime = Math.max(0, Number(seconds) || 0);
+      this._meshUpdateTimeAccumulator = 0;
+    }
+
     _shouldWriteMeshThisFrame() {
+      if (this._meshUpdateIntervalTime > 0) {
+        const dt = this._getRuntime()?.dt ?? 0;
+        this._meshUpdateTimeAccumulator += dt;
+        if (this._meshUpdateTimeAccumulator >= this._meshUpdateIntervalTime) {
+          this._meshUpdateTimeAccumulator -= this._meshUpdateIntervalTime;
+          return true;
+        }
+        return false;
+      }
+
       this._meshUpdateCounter++;
       if (this._meshUpdateInterval <= 1) {
         return true;
@@ -1894,32 +1946,19 @@ export default function (parentClass) {
     }
 
     _getDebuggerProperties() {
-      const meshState = this._meshDeformEnabled
-        ? (this._meshReady ? "on (ready)" : "on (waiting)")
-        : "off";
       const tags = Array.from(this._obstacleTagSet).join(", ");
-      const raycastMs = Number.isFinite(this._lastRaycastMs)
-        ? Math.round(this._lastRaycastMs * 100) / 100
-        : 0;
 
       return [
         {
           title: `$${this.behaviorType.name}`,
           properties: [
-            { name: "$enabled", value: this._enabled },
+            { name: "$enabled", value: this._enabled, onedit: v => { this._setEnabled(v === "true" || v === true); } },
             { name: "$mode", value: this._obstacleMode },
-            { name: "$radius", value: this._lightRadius },
-            { name: "$cone", value: this._rayArc },
+            { name: "$radius", value: this._lightRadius, onedit: v => { this._setLightRadius(+v); } },
+            { name: "$cone", value: this._rayArc, onedit: v => { this._setRayArc(+v); } },
             { name: "$rayCount", value: this._calculateRayCount() },
             { name: "$polyPoints", value: this._polyPoints.length },
-            { name: "$visible", value: this._visibleList.length },
-            { name: "$candidates", value: this._obstacleCandidateCount },
-            { name: "$mesh", value: meshState },
-            { name: "$meshEvery", value: this._meshUpdateInterval },
-            { name: "$meshStagger", value: this._meshStaggerMode },
-            { name: "$meshGrid", value: `${this._meshCols}x${this._meshRows}` },
             { name: "$tags", value: tags },
-            { name: "$raycastMs", value: raycastMs },
           ],
         },
       ];

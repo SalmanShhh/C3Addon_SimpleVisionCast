@@ -45,6 +45,7 @@ export const aceCategories = {
   Detection: "Detection",
   Visibility: "Visibility",
   State: "State",
+  Performance: "Performance",
 };
 
 export const info = {

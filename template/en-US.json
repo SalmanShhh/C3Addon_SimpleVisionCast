@@ -10,6 +10,7 @@
         "aceCategories": {
           "Detection": "Detection",
           "Mesh": "Mesh",
+          "Performance": "Performance",
           "Setup": "Setup",
           "State": "State",
           "Visibility": "Visibility"
@@ -104,6 +105,65 @@
               "y": {
                 "name": "Y",
                 "desc": "Normalized Y coordinate."
+              }
+            }
+          },
+          "SetMaxObstacleCandidates": {
+            "list-name": "Set max obstacle candidates",
+            "display-text": "Limit obstacle candidates to {0} (0 = unlimited)",
+            "description": "Cap the number of obstacle instances tested each rebuild. Candidates are the first N collected by the active obstacle mode. 0 means unlimited. Reduces raycasting cost in dense scenes at the cost of accuracy.",
+            "params": {
+              "count": {
+                "name": "Max candidates",
+                "desc": "Maximum obstacles to consider (0 = no limit)"
+              }
+            }
+          },
+          "SetMeshStaggerMode": {
+            "list-name": "Set mesh stagger mode",
+            "display-text": "Set mesh stagger mode to {0}",
+            "description": "Switch the mesh stagger strategy. 'Stable' writes the mesh only on the scheduled interval frame. 'Hybrid' also writes whenever the vision polygon refreshes mid-interval.",
+            "params": {
+              "mode": {
+                "name": "Mode",
+                "desc": "Stagger strategy. 'Stable' = mesh updates only on scheduled interval frames. 'Hybrid' = also update when vision polygon refreshes mid-interval.",
+                "items": {
+                  "stable": "Stable",
+                  "hybrid": "Hybrid"
+                }
+              }
+            }
+          },
+          "SetMeshUpdateInterval": {
+            "list-name": "Set mesh update interval",
+            "display-text": "Set mesh update interval to {0} frame(s)",
+            "description": "Set how many frames to skip between mesh writes. 1 = every frame. Higher values reduce GPU overhead when many instances share a scene.",
+            "params": {
+              "interval": {
+                "name": "Interval",
+                "desc": "Frames between mesh writes (1 = every frame, 2+ = skip frames)"
+              }
+            }
+          },
+          "SetMeshUpdateIntervalTime": {
+            "list-name": "Set mesh update interval (time)",
+            "display-text": "Set mesh update interval to {0} second(s)",
+            "description": "Set a time-based interval (in seconds) between mesh writes. Overrides the frame-based interval while active. Set to 0 to revert to frame-based mode.",
+            "params": {
+              "seconds": {
+                "name": "Seconds",
+                "desc": "Seconds between mesh writes. 0 = revert to frame-based mode."
+              }
+            }
+          },
+          "SetRaycastSkipRate": {
+            "list-name": "Set raycast skip rate",
+            "display-text": "Rebuild vision every {0} frame(s)",
+            "description": "Rebuild the visibility polygon only once every N frames, regardless of stagger mode. 0 or 1 disables skipping (existing stagger rules apply). 2+ skips N−1 frames between rebuilds. Useful for background or off-screen emitters.",
+            "params": {
+              "rate": {
+                "name": "Rate",
+                "desc": "Frames per vision rebuild (0 or 1 = no skip, 2+ = skip N-1 frames)"
               }
             }
           },
@@ -241,6 +301,17 @@
             "display-text": "On object leave line of sight",
             "description": "Triggered when a detection-tagged object is no longer visible.",
             "params": {}
+          },
+          "OnRaycastBudgetExceeded": {
+            "list-name": "On raycast budget exceeded",
+            "display-text": "On raycast took longer than {0} ms",
+            "description": "Triggered after every vision rebuild in which the raycast took longer than the given threshold. Use LastRaycastMs to read the exact duration. Pair with SetRayDensity or SetRaycastSkipRate to reduce cost adaptively.",
+            "params": {
+              "budgetMs": {
+                "name": "Budget (ms)",
+                "desc": "Threshold in milliseconds. Fires when the last raycast exceeded this value."
+              }
+            }
           },
           "HasObstacleObject": {
             "list-name": "Has obstacle object",
@@ -398,6 +469,36 @@
           "RayHitY": {
             "translated-name": "RayHitY",
             "description": "World Y of the current ray hit.",
+            "params": {}
+          },
+          "ActiveMeshStaggerMode": {
+            "translated-name": "ActiveMeshStaggerMode",
+            "description": "Current mesh stagger mode key: \"stable\" or \"hybrid\".",
+            "params": {}
+          },
+          "ActiveMeshUpdateInterval": {
+            "translated-name": "ActiveMeshUpdateInterval",
+            "description": "Current mesh write interval in frames.",
+            "params": {}
+          },
+          "ActiveMeshUpdateIntervalTime": {
+            "translated-name": "ActiveMeshUpdateIntervalTime",
+            "description": "Current time-based mesh write interval in seconds. Returns 0 when frame-based mode is active.",
+            "params": {}
+          },
+          "ActiveRaycastSkipRate": {
+            "translated-name": "ActiveRaycastSkipRate",
+            "description": "Current raycast skip rate — frames between vision rebuilds (0 or 1 = no skip).",
+            "params": {}
+          },
+          "LastRaycastMs": {
+            "translated-name": "LastRaycastMs",
+            "description": "Time in milliseconds spent rebuilding the visibility polygon on the most recent update. Use with On raycast budget exceeded or poll each tick to drive adaptive quality.",
+            "params": {}
+          },
+          "ObstacleCandidateCount": {
+            "translated-name": "ObstacleCandidateCount",
+            "description": "Number of obstacle instances that were considered in the most recent vision rebuild. Reflects any active candidate cap.",
             "params": {}
           },
           "ActiveFacingAngle": {

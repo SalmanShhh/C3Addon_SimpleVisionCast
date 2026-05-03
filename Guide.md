@@ -11,7 +11,8 @@
 5. [Ray Casting and Visibility](#5-ray-casting-and-visibility)
 6. [Line-of-Sight Detection](#6-line-of-sight-detection)
 7. [Mesh Integration](#7-mesh-integration)
-8. [Actions Reference](#9-actions-reference)
+8. [Performance Tuning](#8-performance-tuning)
+9. [Actions Reference](#9-actions-reference)
 10. [Conditions Reference](#10-conditions-reference)
 11. [Expressions Reference](#11-expressions-reference)
 12. [Triggers Reference](#12-triggers-reference)
@@ -350,6 +351,157 @@ Event: Simple Vision Cast: On mesh not ready
 
 ---
 
+## 8. Performance Tuning
+
+Simple Vision Cast does two expensive things every frame: **raycasting** (rebuilding the visibility polygon) and **mesh writing** (uploading new vertex positions to the GPU). Both are controllable independently. This section explains what each control does, when to reach for it, and how to combine them for adaptive quality.
+
+### Understanding the Two Cost Buckets
+
+| Operation | Controlled by |
+|---|---|
+| **Raycasting** — rebuilds the visibility polygon by casting rays against obstacle candidates. Cost scales with ray count × obstacle count. | Ray density, light radius, obstacle candidate cap, raycast skip rate |
+| **Mesh writing** — uploads new polygon vertices to the host object's mesh deformer. Cost is roughly constant per instance, but multiplied by the number of instances that update on the same frame. | Mesh update interval (frames or seconds), stagger mode |
+
+Use `LastRaycastMs` and `ObstacleCandidateCount` to measure; use the controls below to reduce cost where it hurts.
+
+---
+
+### Mesh Update Interval (Frames)
+
+**Set mesh update interval** controls how many frames elapse between mesh writes. At `1` (default) the mesh is rewritten every frame. At `4` it is rewritten every fourth frame, cutting mesh-write overhead to 25% of its default cost. Visually, higher intervals mean the light shape updates less frequently — acceptable for slow-moving or stationary lights.
+
+```
+Event: On start of layout
+  Action: TorchLight: Set mesh update interval -> 3
+  // Mesh only rewrites every 3rd frame — good for a stationary torch
+
+  Action: PlayerLight: Set mesh update interval -> 1
+  // Player's light still updates every frame for sharp response
+```
+
+Read the live value back with `ActiveMeshUpdateInterval`.
+
+### Mesh Update Interval (Time)
+
+**Set mesh update interval (time)** switches the mesh write schedule from frame-counting to wall-clock time (seconds). This is useful when your game targets variable frame rates or when you want to express light-update frequency in human terms ("update this light twice per second") rather than frame counts that mean different things at 30 fps versus 144 fps.
+
+Set it to `0` to revert to frame-based mode.
+
+```
+Event: On start of layout
+  Action: DistantLight: Set mesh update interval (time) -> 0.1
+  // Mesh rewrites at most 10 times per second, regardless of frame rate
+
+Event: Player enters high-detail zone
+  Action: DistantLight: Set mesh update interval (time) -> 0
+  // Revert to frame-based (every frame) for maximum quality
+```
+
+Read the live value back with `ActiveMeshUpdateIntervalTime`. When this is `> 0`, the frame-based interval is ignored.
+
+### Mesh Stagger Mode
+
+When multiple Simple Vision Cast instances share a scene, the **stagger mode** prevents them all from writing to their meshes on the same frame — which would spike GPU upload cost.
+
+| Mode | Behaviour |
+|---|---|
+| **Stable** | Each instance writes only on its scheduled interval frame. A phase offset (derived from the instance UID) spreads writes across frames automatically. |
+| **Hybrid** | Like Stable, but also writes whenever the visibility polygon refreshes mid-interval. Keeps the visual more tightly in sync with the raycasted shape at a small extra cost. |
+
+```
+Event: On start of layout
+  // 20 background torches — distribute writes, don't care about mid-interval drift
+  Action: Torch: Set mesh stagger mode -> "Stable"
+  Action: Torch: Set mesh update interval -> 4
+
+  // Player light — always in sync with actual vision
+  Action: PlayerLight: Set mesh stagger mode -> "Hybrid"
+  Action: PlayerLight: Set mesh update interval -> 1
+```
+
+Read the live mode string with `ActiveMeshStaggerMode`.
+
+---
+
+### Raycast Skip Rate
+
+**Set raycast skip rate** rebuilds the visibility polygon only once every N frames, regardless of the mesh stagger schedule. This is an aggressive LOD control: at `2` the polygon is rebuilt on alternate frames; at `4` it refreshes at 15 fps even in a 60 fps game.
+
+The mesh still writes on its own schedule — if raycasting is skipped this frame, the mesh reuses the most recent polygon.
+
+```
+Event: On start of layout
+  Action: BackgroundLight: Set raycast skip rate -> 3
+  // Polygon rebuilds at ~20 fps; mesh still writes on its interval
+
+Event: BackgroundLight enters player viewport
+  Action: BackgroundLight: Set raycast skip rate -> 1
+  // Restore full-rate raycasting when the light is close
+```
+
+Set to `0` or `1` to disable skipping. Read the live value with `ActiveRaycastSkipRate`.
+
+### Max Obstacle Candidates
+
+**Set max obstacle candidates** caps how many obstacle instances are considered each rebuild. Candidates are collected first, then the list is truncated before raycasting begins. This trades correctness for speed in dense scenes: distant or low-priority obstacles at the tail of the list are silently ignored.
+
+`0` means unlimited (default). Use a cap only when `ObstacleCandidateCount` is unusually high and you have confirmed that the extra candidates are not meaningfully affecting the result.
+
+```
+Event: On start of layout
+  Action: Guard: Set max obstacle candidates -> 30
+  // Guard only tests the first 30 collected obstacles per rebuild
+  // Acceptable if the layout has hundreds of small debris objects
+```
+
+---
+
+### Diagnostics Expressions
+
+These expressions expose the internals of the last rebuild. Use them in the C3 debugger overlay, a developer HUD, or directly in events to drive adaptive quality logic.
+
+| Expression | Returns | What it tells you |
+|---|---|---|
+| `LastRaycastMs` | Float | Time in milliseconds spent rebuilding the polygon last frame. |
+| `ObstacleCandidateCount` | Integer | Number of obstacle instances tested in the last rebuild. |
+| `ActiveMeshUpdateInterval` | Integer | Current frame-based mesh write interval. |
+| `ActiveMeshUpdateIntervalTime` | Float | Current time-based mesh write interval in seconds (0 = frame mode). |
+| `ActiveMeshStaggerMode` | String | Current stagger mode: `"stable"` or `"hybrid"`. |
+| `ActiveRaycastSkipRate` | Integer | Current skip rate (0 or 1 = no skipping). |
+
+---
+
+### On Raycast Budget Exceeded
+
+The **On raycast budget exceeded** trigger fires after any rebuild in which `LastRaycastMs` exceeded a threshold you provide. Use it to react to budget spikes without polling every tick.
+
+```
+Event: Simple Vision Cast: On raycast took longer than 3 ms
+  Action: Self: Set ray density -> Self.ActiveRayArc * 0.9
+  // Reduce density by 10% whenever a frame goes over budget
+
+Event: Simple Vision Cast: On raycast took longer than 5 ms
+  Action: Self: Set raycast skip rate -> 2
+  // Emergency throttle: rebuild every other frame
+```
+
+> The trigger fires once per rebuild that exceeded the threshold. If every rebuild is slow, it fires every frame — guard against runaway reduction with a minimum density check.
+
+---
+
+### Choosing the Right Controls
+
+| Situation | Recommended control |
+|---|---|
+| Many instances, mesh cost high | Raise mesh update interval; use Stable stagger mode |
+| Single player light, needs sharp response | Keep interval at 1, use Hybrid stagger |
+| Off-screen or distant lights | Raycast skip rate 3–6 + mesh interval 4–8 |
+| Dense scene with hundreds of obstacles | Lower ray density first; add candidate cap as last resort |
+| Variable frame rate target | Use time-based mesh interval instead of frame-based |
+| Unexplained frame spikes | Read `LastRaycastMs` each frame; subscribe to budget trigger |
+
+---
+
 ## 9. Actions Reference
 
 ### Setup
@@ -390,6 +542,16 @@ Event: Simple Vision Cast: On mesh not ready
 |---|---|
 | **Set enabled** | Enable or disable the behavior. When disabled, raycasting and mesh updates are paused. |
 
+### Performance
+
+| Action | Description |
+|---|---|
+| **Set mesh update interval** | Set how many frames elapse between mesh writes (1–8). 1 = every frame; higher values reduce GPU overhead for slow-moving or background lights. |
+| **Set mesh update interval (time)** | Set a time-based mesh write interval in seconds. Overrides the frame-based interval while > 0. Set to 0 to revert to frame mode. Useful for consistent behavior across frame rates. |
+| **Set mesh stagger mode** | Switch between `Stable` (writes only on scheduled frames, phase-offset by UID) and `Hybrid` (also writes when the polygon refreshes mid-interval). |
+| **Set raycast skip rate** | Rebuild the visibility polygon only once every N frames. 0 or 1 = every frame; 2+ = skip N−1 frames between rebuilds. |
+| **Set max obstacle candidates** | Cap how many obstacles are tested per rebuild. 0 = unlimited. Reduces raycasting cost in dense scenes at the cost of ignoring distant obstacle candidates. |
+
 ---
 
 ## 10. Conditions Reference
@@ -415,6 +577,7 @@ Event: Simple Vision Cast: On mesh not ready
 | **On obstacle mode changed** | Fired when the obstacle mode is switched. |
 | **On obstacle tag changed** | Fired when the obstacle tag is updated. |
 | **On mesh not ready** | Fired when the mesh cannot be initialized. |
+| **On raycast budget exceeded** | Fired after any rebuild in which the raycast took longer than the given threshold (ms). Use with `LastRaycastMs` to reduce quality adaptively. |
 
 ---
 
@@ -454,6 +617,12 @@ Event: Simple Vision Cast: On mesh not ready
 | **IsObstacleModeActive(mode)** | Boolean | Check if a specific obstacle mode is active (1 = yes, 0 = no). |
 | **HasObstacleTag(tag)** | Boolean | Check if a tag is in the obstacle tag set (1 = yes, 0 = no). |
 | **HasObstacleObject(objectType)** | Boolean | Check if an object type is in the custom objects list (1 = yes, 0 = no). |
+| **LastRaycastMs** | Float | Time in milliseconds spent on the most recent visibility polygon rebuild. |
+| **ObstacleCandidateCount** | Integer | Number of obstacle instances tested in the most recent rebuild. |
+| **ActiveMeshUpdateInterval** | Integer | Current frame-based mesh write interval (1–8). |
+| **ActiveMeshUpdateIntervalTime** | Float | Current time-based mesh write interval in seconds. 0 means frame mode is active. |
+| **ActiveMeshStaggerMode** | String | Current stagger mode: `"stable"` or `"hybrid"`. |
+| **ActiveRaycastSkipRate** | Integer | Current raycast skip rate. 0 or 1 = every frame; 2+ = skipping active. |
 
 ---
 
@@ -468,6 +637,7 @@ Event: Simple Vision Cast: On mesh not ready
 | **On obstacle mode changed** | Obstacle mode is switched via action. | Use `ActiveObstacleMode` to see the new mode. |
 | **On obstacle tag changed** | Obstacle tag is updated via action. | Use `ActiveObstacleTag` to see the new tag. |
 | **On mesh not ready** | Mesh deformer cannot be initialized. | Mesh writing is disabled; check object type compatibility. |
+| **On raycast budget exceeded** | The last rebuild took longer than the given threshold (ms). | Read `LastRaycastMs` for the exact duration. Reduce `SetRayDensity` or raise `SetRaycastSkipRate` to recover frame budget. |
 
 ---
 
@@ -633,6 +803,82 @@ Event: Guard rotates
 ```
 
 **Tip:** The pin origin is in normalized sprite coordinates (0.0–1.0). Experiment with different values to create asymmetric light shapes.
+
+---
+
+### Performance System
+
+Controls the rate at which the visibility polygon is rebuilt and the rate at which the result is written to the GPU mesh.
+
+#### Use Case 1: Many Background Torches
+
+**Scenario:** A dungeon level with 30 wall torches. All torches are stationary, so a full polygon rebuild every frame is wasteful.
+
+```
+Event: On start of layout
+  Action: Torch: Set mesh stagger mode -> "Stable"
+  Action: Torch: Set mesh update interval -> 4
+  Action: Torch: Set raycast skip rate -> 2
+  // Each torch rebuilds its polygon every other frame (~30 fps rebuild at 60 fps)
+  // Mesh writes are spread across a 4-frame window; the phase offset derived
+  // from each instance's UID distributes them automatically
+```
+
+**Tip:** Stable stagger + interval 4 means in any given frame at most 1/4 of the torches write their mesh. No manual coordination needed — UID phasing handles it.
+
+#### Use Case 2: Adaptive Quality Under Load
+
+**Scenario:** A mobile game that must stay within a per-frame raycast budget.
+
+```
+Event: On start of layout
+  Action: Light: Set ray density -> 50
+
+Event: Simple Vision Cast: On raycast took longer than 4 ms
+  Condition: Light.ActiveRayArc > 15  // don't go below 15% density
+  Action: Light: Set ray density -> Light.ActiveRayArc - 5
+  // Step down 5% whenever a rebuild exceeds budget
+
+Event: Simple Vision Cast: On polygon updated
+  Condition: Light.LastRaycastMs < 2
+  Condition: Light.ActiveRayArc < 50
+  Action: Light: Set ray density -> Light.ActiveRayArc + 1
+  // Slowly recover quality when things are comfortable
+```
+
+**Tip:** Step down in large increments (5–10%), recover in small ones (1–2%). This prevents oscillation around the threshold.
+
+#### Use Case 3: Off-Screen Light Throttling
+
+**Scenario:** Lights far from the player should barely run; lights near the player run at full quality.
+
+```
+Event: Every 0.5 seconds
+  For each Light
+    Condition: distance(Light.X, Light.Y, Player.X, Player.Y) > 800
+    Action: Light: Set raycast skip rate -> 6
+    Action: Light: Set mesh update interval -> 8
+
+Event: Every 0.5 seconds
+  For each Light
+    Condition: distance(Light.X, Light.Y, Player.X, Player.Y) <= 800
+    Action: Light: Set raycast skip rate -> 1
+    Action: Light: Set mesh update interval -> 1
+```
+
+**Tip:** Run the distance check every half-second rather than every tick — checking distances every tick for every light is itself a performance cost.
+
+#### Use Case 4: Time-Based Interval for Cross-Platform Consistency
+
+**Scenario:** The game runs on PC at 144 fps and on mobile at 30 fps. A frame-based interval of 4 means very different real-world refresh rates on each platform.
+
+```
+Event: On start of layout
+  Action: AmbientLight: Set mesh update interval (time) -> 0.05
+  // Mesh rewrites ~20 times per second on all platforms
+  // At 144 fps this skips ~7 frames between writes
+  // At 30 fps this writes almost every frame — correct automatically
+```
 
 ---
 
