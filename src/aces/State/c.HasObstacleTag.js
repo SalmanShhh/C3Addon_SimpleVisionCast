@@ -1,6 +1,6 @@
 export const config = {
   listName: "Has obstacle tag",
-  displayText: "Has obstacle tag <b>{0}</b>",
+  displayText: "Has obstacle tag {0}",
   description: "Check whether a tag is in the active obstacle tag set.",
   params: [
     {

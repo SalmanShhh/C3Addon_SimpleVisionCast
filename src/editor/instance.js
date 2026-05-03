@@ -5,11 +5,8 @@ export default function (instanceClass) {
     }
 
     Release() {}
-
     OnCreate() {}
-
     OnPlacedInLayout() {}
-
     OnPropertyChanged(id, value) {}
   };
 }

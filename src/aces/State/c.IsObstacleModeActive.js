@@ -1,6 +1,6 @@
 export const config = {
   listName: "Is obstacle mode active",
-  displayText: "Obstacle mode is <b>{0}</b>",
+  displayText: "Obstacle mode is {0}",
   description: "Check whether a given obstacle mode is currently active.",
   params: [
     {

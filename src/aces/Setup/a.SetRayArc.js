@@ -1,6 +1,6 @@
 export const config = {
   listName: "Set cone of view",
-  displayText: "Set cone of view to <b>{0}</b> degrees",
+  displayText: "Set cone of view to {0} degrees",
   description: "Set the angular sweep of the visibility cone.",
   params: [
     {

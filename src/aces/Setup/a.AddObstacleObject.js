@@ -1,6 +1,6 @@
 export const config = {
   listName: "Add obstacle object",
-  displayText: "Add <b>{0}</b> as an obstacle object",
+  displayText: "Add {0} as an obstacle object",
   description: "Register an object type for custom object obstacle mode.",
   params: [
     {

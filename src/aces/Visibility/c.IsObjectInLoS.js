@@ -1,20 +1,23 @@
 export const config = {
   listName: "Has line of sight to object",
-  displayText: "Has line of sight to object UID {0}",
-  description: "Check whether the given UID is currently inside the cached visibility polygon.",
+  displayText: "Has line of sight to {0}",
+  description: "Check whether any instance of the given object is currently inside the visibility polygon.",
   params: [
     {
-      id: "uid",
-      name: "UID",
-      desc: "UID to test.",
-      type: "number",
-      initialValue: "0",
+      id: "object",
+      name: "Object",
+      desc: "Object to test.",
+      type: "object",
     },
   ],
 };
 
 export const expose = true;
 
-export default function (uid) {
-  return this._isObjectInLoS(uid);
+export default function (object) {
+  if (!object) return false;
+  for (const inst of object.instances()) {
+    if (this._isObjectInLoS(this._getUID(inst))) return true;
+  }
+  return false;
 }

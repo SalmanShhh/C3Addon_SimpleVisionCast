@@ -1,6 +1,6 @@
 export const config = {
   listName: "Set range",
-  displayText: "Set line of sight range to <b>{0}</b>",
+  displayText: "Set line of sight range to {0}",
   description: "Set the maximum ray distance in pixels.",
   params: [
     {

@@ -1,6 +1,6 @@
 export const config = {
   listName: "Add obstacle tag",
-  displayText: "Add obstacle tag <b>{0}</b>",
+  displayText: "Add obstacle tag {0}",
   description: "Add a secondary obstacle tag in tag mode.",
   params: [
     {

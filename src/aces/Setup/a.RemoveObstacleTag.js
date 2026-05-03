@@ -1,6 +1,6 @@
 export const config = {
   listName: "Remove obstacle tag",
-  displayText: "Remove obstacle tag <b>{0}</b>",
+  displayText: "Remove obstacle tag {0}",
   description: "Remove a tag from the active obstacle tag set.",
   params: [
     {

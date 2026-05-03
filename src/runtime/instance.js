@@ -2,7 +2,7 @@ import { id, addonType } from "../../config.caw.js";
 import AddonTypeMap from "../../template/addonTypeMap.js";
 
 const OBSTACLE_MODES = ["solid_behaviour", "custom_objects", "tag"];
-const CULL_MODES = ["radius_aabb", "none"];
+const STAGGER_MODES = ["stable", "hybrid"];
 const EPSILON_ANGLE = 0.001;
 
 export default function (parentClass) {
@@ -13,19 +13,17 @@ export default function (parentClass) {
 
       this.events = {};
 
-      this._batcherHandshake = properties[0] !== undefined ? !!properties[0] : true;
-      this._obstacleMode = this._combo(properties[1], OBSTACLE_MODES);
-      this._initialObstacleObjectSid = this._coerceSid(properties[2]);
-      this._primaryObstacleTag = typeof properties[3] === "string" ? properties[3] : "wall";
-      this._detectionTag = typeof properties[4] === "string" ? properties[4] : "";
-      this._lightRadius = Math.max(0, Number(properties[5]) || 300);
-      this._rayArc = this._clamp(Number(properties[6]) || 360, 1, 360);
-      this._rayCount = Math.max(8, Math.floor(Number(properties[7]) || 64));
-      this._facingAngle = Number(properties[8]) || 0;
-      this._meshDeformEnabled = properties[9] !== undefined ? !!properties[9] : true;
-      this._detectionInterval = Math.max(0, Number(properties[10]) || 0);
-      this._cullMode = this._combo(properties[11], CULL_MODES);
-      this._debugOverlay = properties[12] !== undefined ? !!properties[12] : false;
+      this._lightRadius = Math.max(0, Number(properties[0]) || 300);
+      this._rayArc = this._clamp(Number(properties[1]) || 360, 1, 360);
+      this._rayDensity = this._clamp(Number(properties[2]) || 0.5, 0.01, 1);
+      this._obstacleMode = this._combo(properties[3], OBSTACLE_MODES);
+      this._primaryObstacleTag = typeof properties[4] === "string" ? properties[4] : "wall";
+      this._detectionTag = "";
+      this._meshDeformEnabled = properties[5] !== undefined ? !!properties[5] : true;
+      this._meshUpdateInterval = this._clamp(Math.floor(Number(properties[6]) || 1), 1, 8, 1);
+      this._meshStaggerMode = this._combo(properties[7], STAGGER_MODES);
+      this._meshUpdateCounter = 0;
+      this._meshUpdatePhase = 0;
 
       this._obstacleTagSet = new Set();
       if (this._primaryObstacleTag) {
@@ -38,13 +36,9 @@ export default function (parentClass) {
       this._polyPoints = [];
       this._visibleSet = new Set();
       this._visibleList = [];
-      this._candidateCache = [];
 
       this._pinNormX = 0.5;
       this._pinNormY = 0.5;
-
-      this._claimedByUID = -1;
-      this._batchSuppressMesh = false;
 
       this._currentEntrant = -1;
       this._currentExitant = -1;
@@ -54,60 +48,68 @@ export default function (parentClass) {
         y: 0,
         angle: 0,
         instance: null,
+        normalX: 0,
+        normalY: 0,
+        reflectX: 0,
+        reflectY: 0,
       };
 
       this._meshApi = null;
+      this._meshSizeApi = null;
+      this._meshCreateApi = null;
       this._meshCols = 0;
       this._meshRows = 0;
       this._meshReady = false;
       this._meshNotReadyReported = false;
 
-      this._detectionTimer = 0;
       this._needsDetectionSweep = true;
       this._lastPolygonUpdateTime = 0;
       this._lastRaycastMs = 0;
       this._obstacleCandidateCount = 0;
 
-      this._setTicking(true);
+      this._enabled = properties[8] !== undefined ? !!properties[8] : true;
+
+      // Use post-events tick so event-sheet angle changes are reflected this frame.
+      this._setTicking2(true);
     }
 
     onCreate() {
-      if (this._initialObstacleObjectSid !== -1) {
-        const objectType = this._getObjectTypeBySid(this._initialObstacleObjectSid);
-        if (objectType) {
-          const name = this._resolveObjectTypeName(objectType);
-          if (name) this._obstacleObjectRefs.set(name, objectType);
-        }
-      }
-
+      const uid = this._getUID(this.instance);
+      this._meshUpdatePhase = uid === -1 ? 0 : (Math.abs(uid) % this._meshUpdateInterval);
       this._refreshMeshDimensions();
     }
 
-    _tick() {
-      const raycastStart = performance.now();
-      const candidates = this._collectObstacleCandidates();
-      this._candidateCache = candidates;
-      this._obstacleCandidateCount = candidates.length;
-      this._rebuildVisibilityPolygon(candidates);
-      this._lastRaycastMs = performance.now() - raycastStart;
-      this._lastPolygonUpdateTime = this._getRuntimeTime();
+    _updateVisionFrame() {
+      const shouldWriteMesh = this._shouldWriteMeshThisFrame();
+      const shouldUpdateVision = this._meshStaggerMode === "hybrid" || shouldWriteMesh;
 
-      this._trigger("OnPolygonUpdated");
+      if (shouldUpdateVision) {
+        const raycastStart = performance.now();
+        const candidates = this._collectObstacleCandidates();
+        this._obstacleCandidateCount = candidates.length;
+        this._rebuildVisibilityPolygon(candidates);
+        this._lastRaycastMs = performance.now() - raycastStart;
+        this._lastPolygonUpdateTime = this._getRuntimeTime();
+        this._trigger("OnPolygonUpdated");
+      }
 
-      if (this._meshDeformEnabled && !this._batchSuppressMesh) {
+      if (this._meshDeformEnabled && shouldWriteMesh) {
         this._writePolygonToMesh();
       }
 
-      this._detectionTimer += this._getDeltaTime();
-      if (
-        this._needsDetectionSweep ||
-        this._detectionInterval === 0 ||
-        this._detectionTimer >= this._detectionInterval
-      ) {
+       if (this._needsDetectionSweep) {
         this._runDetectionSweep();
-        this._detectionTimer = 0;
         this._needsDetectionSweep = false;
       }
+    }
+
+    _tick() {
+      // Intentionally unused. Vision update runs in _tick2() after events.
+    }
+
+    _tick2() {
+      if (!this._enabled) return;
+      this._updateVisionFrame();
     }
 
     _trigger(method) {
@@ -157,19 +159,15 @@ export default function (parentClass) {
         obstacleTags: Array.from(this._obstacleTagSet),
         primaryObstacleTag: this._primaryObstacleTag,
         obstacleObjectNames: Array.from(this._obstacleObjectRefs.keys()),
-        detectionTag: this._detectionTag,
         lightRadius: this._lightRadius,
         rayArc: this._rayArc,
-        rayCount: this._rayCount,
-        facingAngle: this._facingAngle,
+        rayDensity: this._rayDensity,
         meshDeformEnabled: this._meshDeformEnabled,
-        detectionInterval: this._detectionInterval,
-        cullMode: this._cullMode,
-        batcherHandshake: this._batcherHandshake,
+        meshUpdateInterval: this._meshUpdateInterval,
+        meshStaggerMode: this._meshStaggerMode,
         pinNormX: this._pinNormX,
         pinNormY: this._pinNormY,
-        claimedByUID: this._claimedByUID,
-        batchSuppressMesh: this._batchSuppressMesh,
+        enabled: this._enabled,
       };
     }
 
@@ -184,31 +182,19 @@ export default function (parentClass) {
       if (this._primaryObstacleTag) {
         this._obstacleTagSet.add(this._primaryObstacleTag);
       }
-      this._detectionTag = typeof o?.detectionTag === "string" ? o.detectionTag : this._detectionTag;
       this._lightRadius = Math.max(0, Number(o?.lightRadius) || this._lightRadius);
       this._rayArc = this._clamp(Number(o?.rayArc) || this._rayArc, 1, 360);
-      this._rayCount = Math.max(8, Math.floor(Number(o?.rayCount) || this._rayCount));
-      this._facingAngle = Number(o?.facingAngle) || this._facingAngle;
+      this._rayDensity = this._clamp(Number(o?.rayDensity) || this._rayDensity, 0.01, 1);
       this._meshDeformEnabled = o?.meshDeformEnabled !== undefined
         ? !!o.meshDeformEnabled
         : this._meshDeformEnabled;
-      this._detectionInterval = Math.max(
-        0,
-        Number(o?.detectionInterval) || this._detectionInterval
-      );
-      this._cullMode = CULL_MODES.includes(o?.cullMode) ? o.cullMode : this._cullMode;
-      this._batcherHandshake = o?.batcherHandshake !== undefined
-        ? !!o.batcherHandshake
-        : this._batcherHandshake;
+      this._setMeshUpdateInterval(Number(o?.meshUpdateInterval));
+      this._meshStaggerMode = STAGGER_MODES.includes(o?.meshStaggerMode)
+        ? o.meshStaggerMode
+        : this._meshStaggerMode;
       this._pinNormX = this._clamp(Number(o?.pinNormX), 0, 1, this._pinNormX);
       this._pinNormY = this._clamp(Number(o?.pinNormY), 0, 1, this._pinNormY);
-      this._claimedByUID = Number.isFinite(Number(o?.claimedByUID))
-        ? Number(o.claimedByUID)
-        : -1;
-      this._batchSuppressMesh = o?.batchSuppressMesh !== undefined
-        ? !!o.batchSuppressMesh
-        : false;
-
+      this._enabled = o?.enabled !== false;
       this._visibleSet.clear();
       this._visibleList = [];
       this._needsDetectionSweep = true;
@@ -223,6 +209,23 @@ export default function (parentClass) {
       }
 
       this._refreshMeshDimensions();
+    }
+
+    _setMeshUpdateInterval(interval) {
+      const nextInterval = this._clamp(Math.floor(Number(interval) || this._meshUpdateInterval), 1, 8, 1);
+      this._meshUpdateInterval = nextInterval;
+      this._meshUpdateCounter = 0;
+      const uid = this._getUID(this.instance);
+      this._meshUpdatePhase = uid === -1 ? 0 : (Math.abs(uid) % this._meshUpdateInterval);
+    }
+
+    _shouldWriteMeshThisFrame() {
+      this._meshUpdateCounter++;
+      if (this._meshUpdateInterval <= 1) {
+        return true;
+      }
+
+      return ((this._meshUpdateCounter + this._meshUpdatePhase) % this._meshUpdateInterval) === 0;
     }
 
     _combo(value, keys) {
@@ -240,11 +243,6 @@ export default function (parentClass) {
       }
 
       return Math.max(min, Math.min(max, value));
-    }
-
-    _coerceSid(value) {
-      const sid = Number(value);
-      return Number.isFinite(sid) && sid >= 0 ? sid : -1;
     }
 
     _degToRad(degrees) {
@@ -271,10 +269,6 @@ export default function (parentClass) {
       return this.runtime || this.instance?.runtime || null;
     }
 
-    _getDeltaTime() {
-      return this._getRuntime()?.dt || 0;
-    }
-
     _getRuntimeTime() {
       const runtime = this._getRuntime();
       // IRuntime.gameTime is the authoritative clock in the C3 scripting API
@@ -288,7 +282,7 @@ export default function (parentClass) {
     }
 
     _getFacingAngleDegrees() {
-      return this._normalizeAngle(this._radToDeg(this._getInstanceAngleRadians()) + this._facingAngle);
+      return this._normalizeAngle(this._radToDeg(this._getInstanceAngleRadians()));
     }
 
     _getOriginX() {
@@ -313,6 +307,42 @@ export default function (parentClass) {
         width: Math.max(1, Math.abs(Number(this.instance?.width) || 1)),
         height: Math.max(1, Math.abs(Number(this.instance?.height) || 1)),
       };
+    }
+
+    _setHostSize(width, height) {
+      const w = Math.max(1, Number(width) || 1);
+      const h = Math.max(1, Number(height) || 1);
+      const target = this.instance;
+      if (!target) {
+        return false;
+      }
+
+      const setSize = target.setSize || target.SetSize;
+      if (typeof setSize === "function") {
+        try {
+          setSize.call(target, w, h);
+          return true;
+        } catch (_) {
+        }
+      }
+
+      try {
+        target.width = w;
+        target.height = h;
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    _ensureHostCoverageForRange() {
+      const desired = Math.max(2, this._lightRadius * 2);
+      const current = this._getHostSize();
+      if (current.width >= desired && current.height >= desired) {
+        return;
+      }
+
+      this._setHostSize(Math.max(current.width, desired), Math.max(current.height, desired));
     }
 
     _getBoundingBox(instance) {
@@ -366,6 +396,81 @@ export default function (parentClass) {
       };
     }
 
+    _getObstacleQuadPoints(instance) {
+      if (!instance) {
+        return null;
+      }
+
+      const readQuad = (quad) => {
+        if (!quad) {
+          return null;
+        }
+
+        const points = [
+          { x: Number(quad.p1?.x), y: Number(quad.p1?.y) },
+          { x: Number(quad.p2?.x), y: Number(quad.p2?.y) },
+          { x: Number(quad.p3?.x), y: Number(quad.p3?.y) },
+          { x: Number(quad.p4?.x), y: Number(quad.p4?.y) },
+        ];
+
+        if (points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))) {
+          return points;
+        }
+
+        return null;
+      };
+
+      const direct = instance.getQuad || instance.GetQuad;
+      if (typeof direct === "function") {
+        try {
+          const points = readQuad(direct.call(instance));
+          if (points) {
+            return points;
+          }
+        } catch (_) {
+        }
+      }
+
+      const worldInfo = typeof instance.GetWorldInfo === "function" ? instance.GetWorldInfo() : null;
+      const worldInfoQuad = worldInfo?.getQuad || worldInfo?.GetQuad;
+      if (typeof worldInfoQuad === "function") {
+        try {
+          const points = readQuad(worldInfoQuad.call(worldInfo));
+          if (points) {
+            return points;
+          }
+        } catch (_) {
+        }
+      }
+
+      // Guaranteed fallback: compute an oriented quad from instance transform.
+      const x = Number(instance?.x);
+      const y = Number(instance?.y);
+      const w = Math.abs(Number(instance?.width) || 0);
+      const h = Math.abs(Number(instance?.height) || 0);
+      const angle = Number(instance?.angle) || 0;
+      if (Number.isFinite(x) && Number.isFinite(y) && w > 0 && h > 0) {
+        const hx = w * 0.5;
+        const hy = h * 0.5;
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+
+        const corners = [
+          { x: -hx, y: -hy },
+          { x: hx, y: -hy },
+          { x: hx, y: hy },
+          { x: -hx, y: hy },
+        ];
+
+        return corners.map((p) => ({
+          x: x + (p.x * cos) - (p.y * sin),
+          y: y + (p.x * sin) + (p.y * cos),
+        }));
+      }
+
+      return null;
+    }
+
     _boundsIntersect(a, b) {
       return !(
         a.right < b.left ||
@@ -387,39 +492,96 @@ export default function (parentClass) {
       };
     }
 
-    _getObjectTypeBySid(sid) {
-      const runtime = this._getRuntime();
-      if (!runtime || sid === -1) {
+    _getRuntimeObjectTypes(objects) {
+      if (!objects) {
+        return [];
+      }
+
+      if (Array.isArray(objects)) {
+        return objects;
+      }
+
+      if (typeof objects[Symbol.iterator] === "function") {
+        try {
+          return Array.from(objects);
+        } catch (_) {
+        }
+      }
+
+      return Object.values(objects);
+    }
+
+    _forEachBehaviorEntry(instance, callback) {
+      const behaviorBag = instance?.behaviors;
+      if (!behaviorBag) {
+        return;
+      }
+
+      if (Array.isArray(behaviorBag)) {
+        for (let i = 0; i < behaviorBag.length; i++) {
+          callback(String(i), behaviorBag[i]);
+        }
+        return;
+      }
+
+      if (typeof behaviorBag[Symbol.iterator] === "function") {
+        for (const item of behaviorBag) {
+          if (Array.isArray(item) && item.length >= 2) {
+            callback(String(item[0]), item[1]);
+          } else {
+            callback("", item);
+          }
+        }
+        return;
+      }
+
+      for (const [key, behavior] of Object.entries(behaviorBag)) {
+        callback(key, behavior);
+      }
+    }
+
+    _normalizeBehaviorTypeName(value) {
+      return String(value || "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+    }
+
+    _isBehaviorEnabled(behavior) {
+      if (!behavior) {
+        return false;
+      }
+      return behavior.isEnabled !== false && behavior.enabled !== false;
+    }
+
+    _getEnabledBehaviorByType(instance, typeName) {
+      const behaviorBag = instance?.behaviors;
+      if (!behaviorBag) {
         return null;
       }
 
-      if (typeof runtime.getObjectClassBySid === "function") {
-        return runtime.getObjectClassBySid(sid);
+      const target = this._normalizeBehaviorTypeName(typeName);
+      const direct = behaviorBag[typeName] || behaviorBag[target] || behaviorBag.Solid || behaviorBag.solid;
+      if (this._isBehaviorEnabled(direct)) {
+        return direct;
       }
 
-      if (runtime.objects) {
-        for (const objectType of runtime.objects) {
-          if (Number(objectType?.sid) === sid || Number(objectType?._sid) === sid) {
-            return objectType;
-          }
+      let found = null;
+      this._forEachBehaviorEntry(instance, (key, behavior) => {
+        if (found || !this._isBehaviorEnabled(behavior)) {
+          return;
         }
-      }
 
-      return null;
+        const keyName = this._normalizeBehaviorTypeName(key);
+        const behaviorTypeName = this._normalizeBehaviorTypeName(behavior?.behaviorType?.name);
+
+        if (keyName === target || behaviorTypeName === target) {
+          found = behavior;
+        }
+      });
+
+      return found;
     }
 
     _instanceHasEnabledBehavior(instance, behaviorName) {
-      if (!instance?.behaviors) {
-        return false;
-      }
-
-      for (const behavior of Object.values(instance.behaviors)) {
-        if (behavior?.behaviorType?.name === behaviorName && behavior.isEnabled !== false) {
-          return true;
-        }
-      }
-
-      return false;
+      return !!this._getEnabledBehaviorByType(instance, behaviorName);
     }
 
     _instanceHasTag(instance, tag) {
@@ -454,7 +616,7 @@ export default function (parentClass) {
         return allInstances;
       }
 
-      for (const objectType of runtime.objects) {
+      for (const objectType of this._getRuntimeObjectTypes(runtime.objects)) {
         if (!objectType || typeof objectType.getAllInstances !== "function") {
           continue;
         }
@@ -498,11 +660,7 @@ export default function (parentClass) {
         }
 
         const bbox = this._getBoundingBox(instance);
-        if (!bbox) {
-          return;
-        }
-
-        if (this._cullMode === "radius_aabb" && !this._boundsIntersect(radiusAABB, bbox)) {
+        if (!bbox || !this._boundsIntersect(radiusAABB, bbox)) {
           return;
         }
 
@@ -541,28 +699,134 @@ export default function (parentClass) {
       return Array.from(candidateByUID.values());
     }
 
+    _getFrameForCollisionPoly(instance) {
+      const animation = instance?.animation;
+      const candidates = [
+        animation?.currentFrame,
+        typeof animation?.getCurrentFrame === "function" ? animation.getCurrentFrame() : null,
+        typeof animation?.GetCurrentFrame === "function" ? animation.GetCurrentFrame() : null,
+        typeof instance?.getCurrentImageInfo === "function" ? instance.getCurrentImageInfo() : null,
+        typeof instance?.GetCurrentImageInfo === "function" ? instance.GetCurrentImageInfo() : null,
+      ];
+
+      for (const frame of candidates) {
+        if (!frame) {
+          continue;
+        }
+        const getCount = frame.getPolyPointCount || frame.GetPolyPointCount;
+        const getX = frame.getPolyPointX || frame.GetPolyPointX;
+        const getY = frame.getPolyPointY || frame.GetPolyPointY;
+        if (typeof getCount === "function" && typeof getX === "function" && typeof getY === "function") {
+          return frame;
+        }
+      }
+
+      return null;
+    }
+
+    _readFrameOrigin(frame, axis) {
+      const key = axis === "x" ? "originX" : "originY";
+      const getter = axis === "x"
+        ? (frame?.getOriginX || frame?.GetOriginX)
+        : (frame?.getOriginY || frame?.GetOriginY);
+
+      const raw = Number(frame?.[key]);
+      if (Number.isFinite(raw)) {
+        return raw;
+      }
+
+      if (typeof getter === "function") {
+        try {
+          const value = Number(getter.call(frame));
+          if (Number.isFinite(value)) {
+            return value;
+          }
+        } catch (_) {
+        }
+      }
+
+      return 0.5;
+    }
+
     _getObstaclePoints(instance, bbox = this._getBoundingBox(instance)) {
       if (!instance || !bbox) {
         return [];
       }
 
-      const frame = instance.animation?.currentFrame;
-      const polyCount = frame && typeof frame.getPolyPointCount === "function"
-        ? Number(frame.getPolyPointCount())
-        : 0;
+      const frame = this._getFrameForCollisionPoly(instance);
+      const getCount = frame && (frame.getPolyPointCount || frame.GetPolyPointCount);
+      const getX = frame && (frame.getPolyPointX || frame.GetPolyPointX);
+      const getY = frame && (frame.getPolyPointY || frame.GetPolyPointY);
 
-      if (polyCount >= 3) {
-        const points = [];
-        for (let index = 0; index < polyCount; index++) {
-          points.push(
-            this._localPointToWorld(
-              instance,
-              Number(frame.getPolyPointX(index)) - 0.5,
-              Number(frame.getPolyPointY(index)) - 0.5
-            )
-          );
+      let polyCount = 0;
+      if (typeof getCount === "function") {
+        try {
+          polyCount = Number(getCount.call(frame));
+        } catch (_) {
+          polyCount = 0;
         }
-        return points;
+      }
+
+      if (polyCount >= 3 && typeof getX === "function" && typeof getY === "function") {
+        const originX = this._readFrameOrigin(frame, "x");
+        const originY = this._readFrameOrigin(frame, "y");
+        const rawPoints = [];
+
+        for (let index = 0; index < polyCount; index++) {
+          let px = 0;
+          let py = 0;
+          try {
+            px = Number(getX.call(frame, index));
+            py = Number(getY.call(frame, index));
+          } catch (_) {
+            continue;
+          }
+
+          if (!Number.isFinite(px) || !Number.isFinite(py)) {
+            continue;
+          }
+
+          rawPoints.push({ x: px, y: py });
+        }
+
+        const points = [];
+        if (rawPoints.length >= 3) {
+          const xs = rawPoints.map((p) => p.x);
+          const ys = rawPoints.map((p) => p.y);
+          const minX = Math.min(...xs);
+          const maxX = Math.max(...xs);
+          const minY = Math.min(...ys);
+          const maxY = Math.max(...ys);
+
+          // Format A: normalized 0..1 coordinates (common).
+          const isNormalized01 = minX >= -0.01 && maxX <= 1.01 && minY >= -0.01 && maxY <= 1.01;
+          // Format B: origin-relative normalized coordinates (around -0.5..0.5).
+          const isOriginRelative = minX >= -1.01 && maxX <= 1.01 && minY >= -1.01 && maxY <= 1.01 && !isNormalized01;
+
+          for (const p of rawPoints) {
+            const localNormX = isNormalized01
+              ? (p.x - originX)
+              : isOriginRelative
+                ? p.x
+                : (p.x - originX);
+            const localNormY = isNormalized01
+              ? (p.y - originY)
+              : isOriginRelative
+                ? p.y
+                : (p.y - originY);
+
+            points.push(this._localPointToWorld(instance, localNormX, localNormY));
+          }
+        }
+
+        if (points.length >= 3) {
+          return points;
+        }
+      }
+
+      const quadPoints = this._getObstacleQuadPoints(instance);
+      if (quadPoints) {
+        return quadPoints;
       }
 
       return [
@@ -592,6 +856,7 @@ export default function (parentClass) {
     _buildRayAngles(candidates) {
       const centerAngle = this._getFacingAngleDegrees();
       const arc = this._rayArc;
+      const rayCount = this._calculateRayCount();
       const isFullCircle = arc >= 360;
       const startAngle = this._normalizeAngle(centerAngle - (arc / 2));
       const angleMap = new Map();
@@ -613,15 +878,15 @@ export default function (parentClass) {
       };
 
       if (isFullCircle) {
-        const step = 360 / this._rayCount;
-        for (let index = 0; index < this._rayCount; index++) {
+        const step = 360 / rayCount;
+        for (let index = 0; index < rayCount; index++) {
           addAngle(startAngle + (step * index), true);
         }
-      } else if (this._rayCount <= 1) {
+      } else if (rayCount <= 1) {
         addAngle(centerAngle, true);
       } else {
-        const step = arc / (this._rayCount - 1);
-        for (let index = 0; index < this._rayCount; index++) {
+        const step = arc / (rayCount - 1);
+        for (let index = 0; index < rayCount; index++) {
           addAngle(startAngle + (step * index), true);
         }
       }
@@ -688,6 +953,8 @@ export default function (parentClass) {
         dist: radius,
         hitUID: -1,
         hitInstance: null,
+        normalX: 0,
+        normalY: 0,
       };
 
       for (const candidate of candidates) {
@@ -717,8 +984,30 @@ export default function (parentClass) {
             result.dist = hit.dist;
             result.hitUID = candidate.uid;
             result.hitInstance = candidate.instance;
+            // Surface normal for the hit segment, oriented toward the ray origin
+            const sx = next.x - current.x;
+            const sy = next.y - current.y;
+            const segLen = Math.sqrt(sx * sx + sy * sy) || 1;
+            let nx = -sy / segLen;
+            let ny = sx / segLen;
+            if (nx * (ox - hit.x) + ny * (oy - hit.y) < 0) { nx = -nx; ny = -ny; }
+            result.normalX = nx;
+            result.normalY = ny;
           }
         }
+      }
+
+      // Reflected endpoint: r = d - 2*(d.n)*n, then extend from hit by remaining distance
+      if (result.hitUID !== -1) {
+        const dot = dx * result.normalX + dy * result.normalY;
+        const rdx = dx - 2 * dot * result.normalX;
+        const rdy = dy - 2 * dot * result.normalY;
+        const remaining = radius - result.dist;
+        result.reflectX = result.x + rdx * remaining;
+        result.reflectY = result.y + rdy * remaining;
+      } else {
+        result.reflectX = result.x;
+        result.reflectY = result.y;
       }
 
       return result;
@@ -726,11 +1015,11 @@ export default function (parentClass) {
 
     _rebuildVisibilityPolygon(candidates) {
       const rays = this._buildRayAngles(candidates);
-      const polyPoints = [];
+      const rawPolyPoints = [];
 
       for (const ray of rays) {
         const hit = this._castRay(ray.angle, candidates);
-        polyPoints.push(hit);
+        rawPolyPoints.push(hit);
 
         if (ray.isPrimary && hit.hitUID !== -1) {
           this._currentRayHit.uid = hit.hitUID;
@@ -738,11 +1027,15 @@ export default function (parentClass) {
           this._currentRayHit.y = hit.y;
           this._currentRayHit.angle = hit.angle;
           this._currentRayHit.instance = hit.hitInstance;
+          this._currentRayHit.normalX = hit.normalX;
+          this._currentRayHit.normalY = hit.normalY;
+          this._currentRayHit.reflectX = hit.reflectX;
+          this._currentRayHit.reflectY = hit.reflectY;
           this._trigger("OnRayHit");
         }
       }
 
-      this._polyPoints = polyPoints;
+      this._polyPoints = rawPolyPoints;
     }
 
     _runDetectionSweep() {
@@ -867,11 +1160,112 @@ export default function (parentClass) {
       return null;
     }
 
+    _resolveMeshSizeApi() {
+      if (this._meshSizeApi) {
+        return this._meshSizeApi;
+      }
+
+      const candidates = [
+        this.instance,
+        this.instance && typeof this.instance.GetWorldInfo === "function"
+          ? this.instance.GetWorldInfo()
+          : null,
+        this.instance?.worldInfo || null,
+        this.instance?._worldInfo || null,
+      ];
+
+      for (const target of candidates) {
+        if (!target) {
+          continue;
+        }
+
+        const setSize = target.setMeshSize || target.SetMeshSize;
+        if (typeof setSize !== "function") {
+          continue;
+        }
+
+        this._meshSizeApi = setSize.bind(target);
+        return this._meshSizeApi;
+      }
+
+      return null;
+    }
+
+    _resolveMeshCreateApi() {
+      if (this._meshCreateApi) {
+        return this._meshCreateApi;
+      }
+
+      const candidates = [
+        this.instance,
+        this.instance && typeof this.instance.GetWorldInfo === "function"
+          ? this.instance.GetWorldInfo()
+          : null,
+        this.instance?.worldInfo || null,
+        this.instance?._worldInfo || null,
+      ];
+
+      for (const target of candidates) {
+        if (!target) {
+          continue;
+        }
+
+        const create = target.createMesh || target.CreateMesh;
+        if (typeof create !== "function") {
+          continue;
+        }
+
+        this._meshCreateApi = create.bind(target);
+        return this._meshCreateApi;
+      }
+
+      return null;
+    }
+
+    _tryCallMeshCreate(createFn, cols, rows) {
+      // Different C3 surfaces expose different createMesh signatures.
+      const attempts = [
+        () => createFn(cols, rows),
+        () => createFn({ cols, rows }),
+        () => createFn({ columns: cols, rows }),
+        () => createFn({ width: cols, height: rows }),
+        () => createFn(),
+      ];
+
+      for (const attempt of attempts) {
+        try {
+          attempt();
+          return true;
+        } catch (_) {
+        }
+      }
+
+      return false;
+    }
+
+    _createMeshGrid(cols, rows) {
+      const direct = this.instance && (this.instance.createMesh || this.instance.CreateMesh);
+      if (typeof direct === "function") {
+        const ok = this._tryCallMeshCreate(direct.bind(this.instance), cols, rows);
+        if (ok) {
+          return true;
+        }
+      }
+
+      const create = this._resolveMeshCreateApi();
+      if (typeof create !== "function") {
+        return false;
+      }
+
+      return this._tryCallMeshCreate(create, cols, rows);
+    }
+
     _meshSetPoint(col, row, point) {
       const direct = this.instance && (this.instance.setMeshPoint || this.instance.SetMeshPoint);
       if (typeof direct === "function") {
         try {
           direct.call(this.instance, col, row, point);
+          this._meshWriteOkCount++;
           return true;
         } catch (_) {
         }
@@ -939,14 +1333,134 @@ export default function (parentClass) {
         }
       }
 
+      if (this._meshCols > 0 && this._meshRows > 0) {
+        this._meshReady = true;
+        return true;
+      }
+
       this._meshCols = 0;
       this._meshRows = 0;
       this._meshReady = false;
       return false;
     }
 
+    _ensureMeshDimensions(minCols = this._calculateRayCount(), minRows = 2) {
+      const targetCols = Math.max(8, Math.ceil(Number(minCols) || 8));
+      const targetRows = Math.max(2, Math.ceil(Number(minRows) || 2));
+
+      if (this._refreshMeshDimensions() && this._meshCols >= targetCols && this._meshRows >= targetRows) {
+        return true;
+      }
+
+      const setSize = this._resolveMeshSizeApi();
+      if (!setSize) {
+        if (!this._createMeshGrid(targetCols, targetRows)) {
+          if (this._adoptExistingMeshDimensions(targetCols, targetRows)) {
+            return true;
+          }
+          return this._refreshMeshDimensions();
+        }
+      }
+
+      let resized = false;
+      if (setSize) {
+        try {
+          setSize(targetCols, targetRows);
+          resized = true;
+        } catch (_) {
+        }
+      }
+
+      if (!resized) {
+        if (this._createMeshGrid(targetCols, targetRows)) {
+          resized = true;
+        }
+
+        if (!resized) {
+          if (this._adoptExistingMeshDimensions(targetCols, targetRows)) {
+            return true;
+          }
+          return this._refreshMeshDimensions();
+        }
+      }
+
+      // Some C3 builds do not expose readable mesh size fields after SetMeshSize.
+      if (!this._adoptExistingMeshDimensions(targetCols, targetRows)) {
+        this._meshCols = targetCols;
+        this._meshRows = targetRows;
+        this._meshReady = true;
+      }
+
+      this._refreshMeshDimensions();
+      return this._meshReady;
+    }
+
+    _probeMeshGrid(cols, rows) {
+      if (cols < 2 || rows < 2) {
+        return false;
+      }
+
+      const okTopLeft = this._meshSetPoint(0, 0, {
+        mode: "absolute",
+        x: 0,
+        y: 0,
+        u: 0,
+        v: 0,
+      });
+      if (!okTopLeft) {
+        return false;
+      }
+
+      const okBottomRight = this._meshSetPoint(cols - 1, rows - 1, {
+        mode: "absolute",
+        x: 1,
+        y: 1,
+        u: 1,
+        v: 1,
+      });
+
+      return okBottomRight;
+    }
+
+    _adoptExistingMeshDimensions(preferredCols, preferredRows) {
+      const colsCandidates = [
+        Math.max(8, Math.floor(preferredCols) || 8),
+        256,
+        128,
+        96,
+        64,
+        48,
+        32,
+        24,
+        16,
+        12,
+        8,
+      ];
+      const rowsCandidates = [
+        Math.max(2, Math.floor(preferredRows) || 2),
+        4,
+        3,
+        2,
+      ];
+
+      for (const cols of colsCandidates) {
+        for (const rows of rowsCandidates) {
+          if (!this._probeMeshGrid(cols, rows)) {
+            continue;
+          }
+
+          this._meshCols = cols;
+          this._meshRows = rows;
+          this._meshReady = true;
+          return true;
+        }
+      }
+
+      return false;
+    }
+
     _resetMeshSurface() {
-      if (!this._refreshMeshDimensions()) {
+      if (!this._ensureMeshDimensions(this._calculateRayCount(), 2)) {
         return false;
       }
 
@@ -985,8 +1499,46 @@ export default function (parentClass) {
       };
     }
 
+    _samplePolygonPointNormalized(t, isFullCircle) {
+      const count = this._polyPoints.length;
+      if (count <= 0) {
+        return null;
+      }
+      if (count === 1) {
+        return this._polyPoints[0];
+      }
+
+      if (isFullCircle) {
+        const scaled = t * count;
+        const i0 = Math.floor(scaled) % count;
+        const i1 = (i0 + 1) % count;
+        const frac = scaled - Math.floor(scaled);
+        const a = this._polyPoints[i0];
+        const b = this._polyPoints[i1];
+        return {
+          ...a,
+          x: a.x + ((b.x - a.x) * frac),
+          y: a.y + ((b.y - a.y) * frac),
+        };
+      }
+
+      const scaled = t * (count - 1);
+      const i0 = Math.floor(scaled);
+      const i1 = Math.min(count - 1, i0 + 1);
+      const frac = scaled - i0;
+      const a = this._polyPoints[i0];
+      const b = this._polyPoints[i1];
+      return {
+        ...a,
+        x: a.x + ((b.x - a.x) * frac),
+        y: a.y + ((b.y - a.y) * frac),
+      };
+    }
+
     _writePolygonToMesh() {
-      if (!this._refreshMeshDimensions()) {
+      this._ensureHostCoverageForRange();
+
+      if (!this._ensureMeshDimensions(this._polyPoints.length || this._calculateRayCount(), 2)) {
         if (!this._meshNotReadyReported) {
           this._meshNotReadyReported = true;
           this._trigger("OnMeshNotReady");
@@ -1004,11 +1556,24 @@ export default function (parentClass) {
         return;
       }
 
+      const isFullCircle = this._rayArc >= 360;
+
       for (let col = 0; col < boundaryCols; col++) {
-        const sampleIndex = boundaryCols <= 1
-          ? 0
-          : Math.round((col / (boundaryCols - 1)) * (this._polyPoints.length - 1));
-        const sample = this._polyPoints[sampleIndex];
+        let sample = null;
+        if (boundaryCols <= 1) {
+          sample = this._polyPoints[0];
+        } else if (isFullCircle && col === boundaryCols - 1) {
+          // Close the 360-degree seam by forcing the last edge vertex to match the first.
+          sample = this._polyPoints[0];
+        } else {
+          const t = col / (boundaryCols - 1);
+          sample = this._samplePolygonPointNormalized(t, isFullCircle);
+        }
+
+        if (!sample) {
+          continue;
+        }
+
         const meshPoint = this._worldToHostMeshPoint(sample.x, sample.y);
         this._meshSetPoint(col, 0, {
           mode: "absolute",
@@ -1062,30 +1627,6 @@ export default function (parentClass) {
       return this._pinNormY;
     }
 
-    IsBatchHandshakeEnabled() {
-      return this._batcherHandshake;
-    }
-
-    ClaimForBatch(batcherUID) {
-      if (!this._batcherHandshake || this._claimedByUID !== -1) {
-        return;
-      }
-
-      this._claimedByUID = Number.isFinite(Number(batcherUID)) ? Number(batcherUID) : -1;
-      this._batchSuppressMesh = true;
-      this._trigger("OnBatcherAttached");
-    }
-
-    ReleaseFromBatch() {
-      if (this._claimedByUID === -1 && !this._batchSuppressMesh) {
-        return;
-      }
-
-      this._claimedByUID = -1;
-      this._batchSuppressMesh = false;
-      this._trigger("OnBatcherDetached");
-    }
-
     _getObstacleMode() {
       return this._obstacleMode;
     }
@@ -1094,11 +1635,6 @@ export default function (parentClass) {
       const nextMode = typeof mode === "string" ? mode : this._combo(mode, OBSTACLE_MODES);
       this._obstacleMode = OBSTACLE_MODES.includes(nextMode) ? nextMode : this._obstacleMode;
       this._trigger("OnObstacleModeChanged");
-    }
-
-    _setCullMode(mode) {
-      const nextMode = typeof mode === "string" ? mode : this._combo(mode, CULL_MODES);
-      this._cullMode = CULL_MODES.includes(nextMode) ? nextMode : this._cullMode;
     }
 
     _resolveObjectTypeName(objectType) {
@@ -1154,28 +1690,19 @@ export default function (parentClass) {
       this._obstacleTagSet.delete(nextTag);
     }
 
-    _setDetectionTag(tag) {
-      this._detectionTag = String(tag || "");
-      this._needsDetectionSweep = true;
-    }
-
     _setLightRadius(radius) {
       this._lightRadius = Math.max(0, Number(radius) || 0);
       this._needsDetectionSweep = true;
     }
 
     _setRayArc(arc) {
-      this._rayArc = this._clamp(Number(arc) || this._rayArc, 1, 360, this._rayArc);
+      this._rayArc = this._clamp(Number(arc) || this._rayArc, 1, 360);
       this._needsDetectionSweep = true;
     }
 
-    _setRayCount(count) {
-      this._rayCount = Math.max(8, Math.floor(Number(count) || this._rayCount));
-      this._needsDetectionSweep = true;
-    }
-
-    _setFacingAngle(angle) {
-      this._facingAngle = Number(angle) || 0;
+    _setRayDensity(density) {
+      // density is 0-1 (percent property convention)
+      this._rayDensity = this._clamp(Number(density) || this._rayDensity, 0.01, 1);
       this._needsDetectionSweep = true;
     }
 
@@ -1200,7 +1727,6 @@ export default function (parentClass) {
     _forceDetectionSweep() {
       this._needsDetectionSweep = true;
       this._runDetectionSweep();
-      this._detectionTimer = 0;
       this._needsDetectionSweep = false;
     }
 
@@ -1210,7 +1736,7 @@ export default function (parentClass) {
     }
 
     _isBatchRendered() {
-      return this._claimedByUID !== -1;
+      return false;
     }
 
     _isObjectInLoS(uid) {
@@ -1219,6 +1745,14 @@ export default function (parentClass) {
 
     _isMeshDeformEnabled() {
       return this._meshDeformEnabled;
+    }
+
+    _setEnabled(value) {
+      this._enabled = !!value;
+    }
+
+    _isEnabled() {
+      return this._enabled;
     }
 
     _isObstacleModeActive(mode) {
@@ -1301,8 +1835,34 @@ export default function (parentClass) {
       return this._currentRayHit.angle;
     }
 
+    _getRayHitNormalX() {
+      return this._currentRayHit.normalX;
+    }
+
+    _getRayHitNormalY() {
+      return this._currentRayHit.normalY;
+    }
+
+    _getRayHitNormalAngle() {
+      return this._normalizeAngle(this._radToDeg(Math.atan2(this._currentRayHit.normalY, this._currentRayHit.normalX)));
+    }
+
+    _getRayHitReflectX() {
+      return this._currentRayHit.reflectX;
+    }
+
+    _getRayHitReflectY() {
+      return this._currentRayHit.reflectY;
+    }
+
+    _getRayHitReflectAngle() {
+      const dx = this._currentRayHit.reflectX - this._currentRayHit.x;
+      const dy = this._currentRayHit.reflectY - this._currentRayHit.y;
+      return this._normalizeAngle(this._radToDeg(Math.atan2(dy, dx)));
+    }
+
     _getBatcherUID() {
-      return this._claimedByUID;
+      return -1;
     }
 
     _getActiveObstacleMode() {
@@ -1317,6 +1877,10 @@ export default function (parentClass) {
       return this._obstacleMode === "custom_objects" ? this._obstacleObjectRefs.size : 0;
     }
 
+    _calculateRayCount() {
+      return Math.max(8, Math.ceil(this._rayArc * this._rayDensity));
+    }
+
     _getActiveLightRadius() {
       return this._lightRadius;
     }
@@ -1325,25 +1889,37 @@ export default function (parentClass) {
       return this._rayArc;
     }
 
-    _getActiveFacingAngle() {
-      return this._facingAngle;
-    }
-
     _getLastPolygonUpdateTime() {
       return this._lastPolygonUpdateTime;
     }
 
     _getDebuggerProperties() {
+      const meshState = this._meshDeformEnabled
+        ? (this._meshReady ? "on (ready)" : "on (waiting)")
+        : "off";
+      const tags = Array.from(this._obstacleTagSet).join(", ");
+      const raycastMs = Number.isFinite(this._lastRaycastMs)
+        ? Math.round(this._lastRaycastMs * 100) / 100
+        : 0;
+
       return [
         {
           title: `$${this.behaviorType.name}`,
           properties: [
-            { name: "$obstacleMode", value: this._obstacleMode },
-            { name: "$polyPointCount", value: this._polyPoints.length },
-            { name: "$obstacleCandidateCount", value: this._obstacleCandidateCount },
-            { name: "$visibleObjectCount", value: this._visibleList.length },
-            { name: "$activeTags", value: Array.from(this._obstacleTagSet).join(", ") },
-            { name: "$lastRaycastMs", value: this._lastRaycastMs },
+            { name: "$enabled", value: this._enabled },
+            { name: "$mode", value: this._obstacleMode },
+            { name: "$radius", value: this._lightRadius },
+            { name: "$cone", value: this._rayArc },
+            { name: "$rayCount", value: this._calculateRayCount() },
+            { name: "$polyPoints", value: this._polyPoints.length },
+            { name: "$visible", value: this._visibleList.length },
+            { name: "$candidates", value: this._obstacleCandidateCount },
+            { name: "$mesh", value: meshState },
+            { name: "$meshEvery", value: this._meshUpdateInterval },
+            { name: "$meshStagger", value: this._meshStaggerMode },
+            { name: "$meshGrid", value: `${this._meshCols}x${this._meshRows}` },
+            { name: "$tags", value: tags },
+            { name: "$raycastMs", value: raycastMs },
           ],
         },
       ];

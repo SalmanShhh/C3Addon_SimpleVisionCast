@@ -1,6 +1,6 @@
 export const config = {
   listName: "Set obstacle mode",
-  displayText: "Set obstacle mode to <b>{0}</b>",
+  displayText: "Set obstacle mode to {0}",
   description: "Switch how obstacle candidates are collected.",
   params: [
     {

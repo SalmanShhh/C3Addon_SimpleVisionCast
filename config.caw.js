@@ -7,8 +7,8 @@ import {
 import _version from "./version.js";
 export const addonType = ADDON_TYPE.BEHAVIOR;
 export const type = PLUGIN_TYPE.OBJECT;
-export const id = "salmanshh_lumencast";
-export const name = "LumenCast";
+export const id = "salmanshh_simplevisioncast";
+export const name = "Simple Vision Cast";
 export const version = _version;
 export const minConstructVersion = undefined;
 export const author = "SalmanShh";
@@ -43,7 +43,6 @@ export const aceCategories = {
   Setup: "Setup",
   Mesh: "Mesh",
   Detection: "Detection",
-  Batcher: "Batcher",
   Visibility: "Visibility",
   State: "State",
 };
@@ -88,13 +87,34 @@ export const info = {
 
 export const properties = [
   {
-    type: PROPERTY_TYPE.CHECK,
-    id: "batcherHandshake",
+    type: PROPERTY_TYPE.FLOAT,
+    id: "range",
     options: {
-      initialValue: true,
+      initialValue: 300,
+      minValue: 0,
     },
-    name: "Batcher handshake",
-    desc: "Allow LumenBatch to claim this light for batched rendering.",
+    name: "Range",
+    desc: "Maximum ray distance in pixels. Larger range = more expensive raycasting. Towers 500px, torches 250px, guards' eyes 300px. Adjust per use case and frame budget.",
+  },
+  {
+    type: PROPERTY_TYPE.FLOAT,
+    id: "cone",
+    options: {
+      initialValue: 360,
+      minValue: 1,
+      maxValue: 360,
+    },
+    name: "Cone",
+    desc: "Angular sweep in degrees. 360 = omnidirectional light. 90 = narrow cone (stealth guards, headlights). Smaller cones are faster to render.",
+  },
+  {
+    type: PROPERTY_TYPE.PERCENT,
+    id: "rayDensity",
+    options: {
+      initialValue: 1.0,
+    },
+    name: "Ray density",
+    desc: "Percentage of ray density. 100% = 1 ray per degree of cone angle. Higher density = smoother polygon but slower. 25% for many lights, 50% for balanced quality, 100% for precision lighting.",
   },
   {
     type: PROPERTY_TYPE.COMBO,
@@ -102,22 +122,13 @@ export const properties = [
     options: {
       initialValue: "solid_behaviour",
       items: [
-        { solid_behaviour: "Solid behaviour" },
+        { solid_behaviour: "Solid" },
         { custom_objects: "Custom objects" },
         { tag: "Tag" },
       ],
     },
     name: "Obstacle mode",
-    desc: "How obstacle candidates are collected each tick.",
-  },
-  {
-    type: PROPERTY_TYPE.OBJECT,
-    id: "obstacleObjects",
-    options: {
-      allowedPluginIds: ["<world>"],
-    },
-    name: "Obstacle object",
-    desc: "Seed obstacle object type for custom object mode.",
+    desc: "How obstacles are identified. Solid: all objects with the Solid behavior block rays. Custom objects: only selected types block rays. Tag: only instances with a tag block rays. Use Tag mode for flexible, performant obstacle selection.",
   },
   {
     type: PROPERTY_TYPE.TEXT,
@@ -126,56 +137,7 @@ export const properties = [
       initialValue: "wall",
     },
     name: "Obstacle tag",
-    desc: "Primary instance tag used in tag obstacle mode.",
-  },
-  {
-    type: PROPERTY_TYPE.TEXT,
-    id: "detectionTag",
-    options: {
-      initialValue: "",
-    },
-    name: "Detection tag",
-    desc: "Instance tag used for enter and exit detection events.",
-  },
-  {
-    type: PROPERTY_TYPE.FLOAT,
-    id: "lightRadius",
-    options: {
-      initialValue: 300,
-      minValue: 0,
-    },
-    name: "Light radius",
-    desc: "Maximum ray distance in world pixels.",
-  },
-  {
-    type: PROPERTY_TYPE.FLOAT,
-    id: "rayArc",
-    options: {
-      initialValue: 360,
-      minValue: 1,
-      maxValue: 360,
-    },
-    name: "Ray arc",
-    desc: "Angular sweep in degrees centered on the facing direction.",
-  },
-  {
-    type: PROPERTY_TYPE.INTEGER,
-    id: "rayCount",
-    options: {
-      initialValue: 64,
-      minValue: 8,
-    },
-    name: "Ray count",
-    desc: "Number of primary rays cast per update.",
-  },
-  {
-    type: PROPERTY_TYPE.FLOAT,
-    id: "facingAngle",
-    options: {
-      initialValue: 0,
-    },
-    name: "Facing angle",
-    desc: "Angle offset added to the host object's angle.",
+    desc: "In tag mode, only instances tagged with this name block rays. Use for walls, terrain, and static obstacles. Add more tags dynamically via AddObstacleTag action.",
   },
   {
     type: PROPERTY_TYPE.CHECK,
@@ -184,35 +146,38 @@ export const properties = [
       initialValue: true,
     },
     name: "Mesh deform enabled",
-    desc: "Write the visibility polygon to the host object's mesh each tick.",
+    desc: "Write the visibility polygon to the host object's mesh for visual rendering each tick. Disable if the light is invisible or for performance (detection still works). Re-enable with EnableMeshDeform action.",
   },
   {
-    type: PROPERTY_TYPE.FLOAT,
-    id: "detectionInterval",
+    type: PROPERTY_TYPE.INTEGER,
+    id: "meshUpdateInterval",
     options: {
-      initialValue: 0,
-      minValue: 0,
+      initialValue: 1,
+      minValue: 1,
     },
-    name: "Detection interval",
-    desc: "Seconds between detection sweeps. Zero means every tick.",
+    name: "Mesh update interval",
+    desc: "How often mesh deformation is written. 1 = every frame. Higher values stagger writes across frames for better performance with many lights.",
   },
   {
     type: PROPERTY_TYPE.COMBO,
-    id: "cullMode",
+    id: "meshStaggerMode",
     options: {
-      initialValue: "radius_aabb",
-      items: [{ radius_aabb: "Radius AABB" }, { none: "None" }],
+      initialValue: "stable",
+      items: [
+        { stable: "Stable (freeze between updates)" },
+        { hybrid: "Hybrid (live LOS, stagger mesh only)" },
+      ],
     },
-    name: "Cull mode",
-    desc: "Broadphase culling mode before raycasting.",
+    name: "Mesh stagger mode",
+    desc: "Stable keeps LOS polygon fixed between stagger ticks. Hybrid updates LOS every frame but only writes mesh on stagger ticks.",
   },
   {
     type: PROPERTY_TYPE.CHECK,
-    id: "debugOverlay",
+    id: "enabled",
     options: {
-      initialValue: false,
+      initialValue: true,
     },
-    name: "Debug overlay",
-    desc: "Draw debugger information in preview builds when available.",
-  },
+    name: "Enabled",
+    desc: "Whether the behavior is active. When disabled, raycasting and mesh updates are paused. Toggle at runtime with the Set enabled action.",
+  }
 ];

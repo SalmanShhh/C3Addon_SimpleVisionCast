@@ -1,6 +1,6 @@
 export const config = {
   listName: "Set obstacle tag",
-  displayText: "Set obstacle tag to <b>{0}</b>",
+  displayText: "Set obstacle tag to {0}",
   description: "Replace the primary obstacle tag used in tag mode.",
   params: [
     {

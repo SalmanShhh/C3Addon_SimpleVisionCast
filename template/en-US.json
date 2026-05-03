@@ -1,81 +1,64 @@
 {
   "languageTag": "en-US",
-  "fileDescription": "Strings for salmanshh_lumencast.",
+  "fileDescription": "Strings for salmanshh_simplevisioncast.",
   "text": {
     "behaviors": {
-      "salmanshh_lumencast": {
-        "name": "LumenCast",
+      "salmanshh_simplevisioncast": {
+        "name": "Simple Vision Cast",
         "description": "Mesh-driven line of sight and dynamic lighting for world objects.",
         "help-url": "https://www.construct.net",
         "aceCategories": {
           "Detection": "Detection",
           "Mesh": "Mesh",
           "Setup": "Setup",
-          "Batcher": "Batcher",
           "State": "State",
           "Visibility": "Visibility"
         },
         "properties": {
-          "batcherHandshake": {
-            "name": "Batcher handshake",
-            "desc": "Allow LumenBatch to claim this light for batched rendering."
+          "range": {
+            "name": "Range",
+            "desc": "Maximum ray distance in pixels. Larger range = more expensive raycasting. Towers 500px, torches 250px, guards' eyes 300px. Adjust per use case and frame budget."
+          },
+          "cone": {
+            "name": "Cone",
+            "desc": "Angular sweep in degrees. 360 = omnidirectional light. 90 = narrow cone (stealth guards, headlights). Smaller cones are faster to render."
+          },
+          "rayDensity": {
+            "name": "Ray density",
+            "desc": "Percentage of ray density. 100% = 1 ray per degree of cone angle. Higher density = smoother polygon but slower. 25% for many lights, 50% for balanced quality, 100% for precision lighting."
           },
           "obstacleMode": {
             "name": "Obstacle mode",
-            "desc": "How obstacle candidates are collected each tick.",
+            "desc": "How obstacles are identified. Solid: all objects with the Solid behavior block rays. Custom objects: only selected types block rays. Tag: only instances with a tag block rays. Use Tag mode for flexible, performant obstacle selection.",
             "items": {
-              "solid_behaviour": "Solid behaviour",
+              "solid_behaviour": "Solid",
               "custom_objects": "Custom objects",
               "tag": "Tag"
             }
           },
-          "obstacleObjects": {
-            "name": "Obstacle object",
-            "desc": "Seed obstacle object type for custom object mode."
-          },
           "obstacleTag": {
             "name": "Obstacle tag",
-            "desc": "Primary instance tag used in tag obstacle mode."
-          },
-          "detectionTag": {
-            "name": "Detection tag",
-            "desc": "Instance tag used for enter and exit detection events."
-          },
-          "lightRadius": {
-            "name": "Light radius",
-            "desc": "Maximum ray distance in world pixels."
-          },
-          "rayArc": {
-            "name": "Ray arc",
-            "desc": "Angular sweep in degrees centered on the facing direction."
-          },
-          "rayCount": {
-            "name": "Ray count",
-            "desc": "Number of primary rays cast per update."
-          },
-          "facingAngle": {
-            "name": "Facing angle",
-            "desc": "Angle offset added to the host object's angle."
+            "desc": "In tag mode, only instances tagged with this name block rays. Use for walls, terrain, and static obstacles. Add more tags dynamically via AddObstacleTag action."
           },
           "meshDeformEnabled": {
             "name": "Mesh deform enabled",
-            "desc": "Write the visibility polygon to the host object's mesh each tick."
+            "desc": "Write the visibility polygon to the host object's mesh for visual rendering each tick. Disable if the light is invisible or for performance (detection still works). Re-enable with EnableMeshDeform action."
           },
-          "detectionInterval": {
-            "name": "Detection interval",
-            "desc": "Seconds between detection sweeps. Zero means every tick."
+          "meshUpdateInterval": {
+            "name": "Mesh update interval",
+            "desc": "How often mesh deformation is written. 1 = every frame. Higher values stagger writes across frames for better performance with many lights."
           },
-          "cullMode": {
-            "name": "Cull mode",
-            "desc": "Broadphase culling mode before raycasting.",
+          "meshStaggerMode": {
+            "name": "Mesh stagger mode",
+            "desc": "Stable keeps LOS polygon fixed between stagger ticks. Hybrid updates LOS every frame but only writes mesh on stagger ticks.",
             "items": {
-              "radius_aabb": "Radius AABB",
-              "none": "None"
+              "stable": "Stable (freeze between updates)",
+              "hybrid": "Hybrid (live LOS, stagger mesh only)"
             }
           },
-          "debugOverlay": {
-            "name": "Debug overlay",
-            "desc": "Draw debugger information in preview builds when available."
+          "enabled": {
+            "name": "Enabled",
+            "desc": "Whether the behavior is active. When disabled, raycasting and mesh updates are paused. Toggle at runtime with the Set enabled action."
           }
         },
         "actions": {
@@ -126,7 +109,7 @@
           },
           "AddObstacleObject": {
             "list-name": "Add obstacle object",
-            "display-text": "Add <b>{0}</b> as an obstacle object",
+            "display-text": "Add {0} as an obstacle object",
             "description": "Register an object type for custom object obstacle mode.",
             "params": {
               "objectType": {
@@ -137,7 +120,7 @@
           },
           "AddObstacleTag": {
             "list-name": "Add obstacle tag",
-            "display-text": "Add obstacle tag <b>{0}</b>",
+            "display-text": "Add obstacle tag {0}",
             "description": "Add a secondary obstacle tag in tag mode.",
             "params": {
               "tag": {
@@ -154,7 +137,7 @@
           },
           "RemoveObstacleObject": {
             "list-name": "Remove obstacle object",
-            "display-text": "Remove <b>{0}</b> from obstacle objects",
+            "display-text": "Remove {0} from obstacle objects",
             "description": "Unregister an object type from custom object obstacle mode.",
             "params": {
               "objectType": {
@@ -165,7 +148,7 @@
           },
           "RemoveObstacleTag": {
             "list-name": "Remove obstacle tag",
-            "display-text": "Remove obstacle tag <b>{0}</b>",
+            "display-text": "Remove obstacle tag {0}",
             "description": "Remove a tag from the active obstacle tag set.",
             "params": {
               "tag": {
@@ -174,46 +157,9 @@
               }
             }
           },
-          "SetCullMode": {
-            "list-name": "Set cull mode",
-            "display-text": "Set cull mode to <b>{0}</b>",
-            "description": "Choose whether obstacle candidates are AABB-culled by radius.",
-            "params": {
-              "mode": {
-                "name": "Mode",
-                "desc": "Cull mode.",
-                "items": {
-                  "radius_aabb": "Radius AABB",
-                  "none": "None"
-                }
-              }
-            }
-          },
-          "SetDetectionTag": {
-            "list-name": "Set detection tag",
-            "display-text": "Set detection tag to <b>{0}</b>",
-            "description": "Choose which tagged instances fire LoS enter and exit events.",
-            "params": {
-              "tag": {
-                "name": "Tag",
-                "desc": "Detection tag."
-              }
-            }
-          },
-          "SetFacingAngle": {
-            "list-name": "Set facing angle",
-            "display-text": "Set facing angle offset to <b>{0}</b>",
-            "description": "Set the cone angle offset relative to the host object.",
-            "params": {
-              "angle": {
-                "name": "Angle",
-                "desc": "Facing angle offset in degrees."
-              }
-            }
-          },
           "SetLightRadius": {
             "list-name": "Set range",
-            "display-text": "Set line of sight range to <b>{0}</b>",
+            "display-text": "Set line of sight range to {0}",
             "description": "Set the maximum ray distance in pixels.",
             "params": {
               "radius": {
@@ -224,7 +170,7 @@
           },
           "SetObstacleMode": {
             "list-name": "Set obstacle mode",
-            "display-text": "Set obstacle mode to <b>{0}</b>",
+            "display-text": "Set obstacle mode to {0}",
             "description": "Switch how obstacle candidates are collected.",
             "params": {
               "mode": {
@@ -240,7 +186,7 @@
           },
           "SetObstacleTag": {
             "list-name": "Set obstacle tag",
-            "display-text": "Set obstacle tag to <b>{0}</b>",
+            "display-text": "Set obstacle tag to {0}",
             "description": "Replace the primary obstacle tag used in tag mode.",
             "params": {
               "tag": {
@@ -251,7 +197,7 @@
           },
           "SetRayArc": {
             "list-name": "Set cone of view",
-            "display-text": "Set cone of view to <b>{0}</b> degrees",
+            "display-text": "Set cone of view to {0} degrees",
             "description": "Set the angular sweep of the visibility cone.",
             "params": {
               "arc": {
@@ -260,37 +206,30 @@
               }
             }
           },
-          "SetRayCount": {
-            "list-name": "Set ray count",
-            "display-text": "Set ray count to <b>{0}</b>",
-            "description": "Set the number of primary rays cast each update.",
+          "SetRayDensity": {
+            "list-name": "Set ray density",
+            "display-text": "Set ray density to {0}%",
+            "description": "Set the ray density as a percentage (1-100). 100% = 1 ray per degree of cone angle. Recalculates on next tick.",
             "params": {
-              "count": {
-                "name": "Ray count",
-                "desc": "Primary ray count."
+              "density": {
+                "name": "Density",
+                "desc": "Ray density percentage (1-100)"
+              }
+            }
+          },
+          "SetEnabled": {
+            "list-name": "Set enabled",
+            "display-text": "Set enabled to {0}",
+            "description": "Enable or disable the Simple Vision Cast behavior. When disabled, raycasting and mesh updates are paused.",
+            "params": {
+              "enabled": {
+                "name": "Enabled",
+                "desc": "Whether to enable the behavior."
               }
             }
           }
         },
         "conditions": {
-          "IsBatchRendered": {
-            "list-name": "Is batch rendered",
-            "display-text": "Is batch rendered",
-            "description": "True if a batcher is currently suppressing individual mesh writes.",
-            "params": {}
-          },
-          "OnBatcherAttached": {
-            "list-name": "On batcher attached",
-            "display-text": "On batcher attached",
-            "description": "Triggered when a LumenBatch instance claims this light.",
-            "params": {}
-          },
-          "OnBatcherDetached": {
-            "list-name": "On batcher detached",
-            "display-text": "On batcher detached",
-            "description": "Triggered when a LumenBatch instance releases this light.",
-            "params": {}
-          },
           "OnObjectEnterLoS": {
             "list-name": "On object enter line of sight",
             "display-text": "On object enter line of sight",
@@ -305,7 +244,7 @@
           },
           "HasObstacleObject": {
             "list-name": "Has obstacle object",
-            "display-text": "Has obstacle object <b>{0}</b>",
+            "display-text": "Has obstacle object {0}",
             "description": "Check whether an object type is registered as a custom obstacle.",
             "params": {
               "objectType": {
@@ -316,7 +255,7 @@
           },
           "HasObstacleTag": {
             "list-name": "Has obstacle tag",
-            "display-text": "Has obstacle tag <b>{0}</b>",
+            "display-text": "Has obstacle tag {0}",
             "description": "Check whether a tag is in the active obstacle tag set.",
             "params": {
               "tag": {
@@ -324,6 +263,12 @@
                 "desc": "Obstacle tag to check."
               }
             }
+          },
+          "IsEnabled": {
+            "list-name": "Is enabled",
+            "display-text": "Is enabled",
+            "description": "True when the Simple Vision Cast behavior is currently enabled.",
+            "params": {}
           },
           "IsMeshDeformEnabled": {
             "list-name": "Is mesh deform enabled",
@@ -333,7 +278,7 @@
           },
           "IsObstacleModeActive": {
             "list-name": "Is obstacle mode active",
-            "display-text": "Obstacle mode is <b>{0}</b>",
+            "display-text": "Obstacle mode is {0}",
             "description": "Check whether a given obstacle mode is currently active.",
             "params": {
               "mode": {
@@ -361,12 +306,12 @@
           },
           "IsObjectInLoS": {
             "list-name": "Has line of sight to object",
-            "display-text": "Has line of sight to object UID {0}",
-            "description": "Check whether the given UID is currently inside the cached visibility polygon.",
+            "display-text": "Has line of sight to {0}",
+            "description": "Check whether any instance of the given object is currently inside the visibility polygon.",
             "params": {
-              "uid": {
-                "name": "UID",
-                "desc": "UID to test."
+              "object": {
+                "name": "Object",
+                "desc": "Object to test."
               }
             }
           },
@@ -410,11 +355,6 @@
           }
         },
         "expressions": {
-          "BatcherUID": {
-            "translated-name": "BatcherUID",
-            "description": "UID of the LumenBatch instance currently rendering this light, or -1.",
-            "params": {}
-          },
           "CountVisibleObjects": {
             "translated-name": "CountVisibleObjects",
             "description": "Number of currently visible detection-tagged objects.",
@@ -553,6 +493,36 @@
           "PolygonArea": {
             "translated-name": "PolygonArea",
             "description": "Approximate area of the current visibility polygon.",
+            "params": {}
+          },
+          "RayHitNormalAngle": {
+            "translated-name": "RayHitNormalAngle",
+            "description": "Angle in degrees of the surface normal at the current ray hit point (0-360). Valid inside On ray hit.",
+            "params": {}
+          },
+          "RayHitNormalX": {
+            "translated-name": "RayHitNormalX",
+            "description": "X component of the surface normal at the current ray hit point (-1 to 1). Valid inside On ray hit.",
+            "params": {}
+          },
+          "RayHitNormalY": {
+            "translated-name": "RayHitNormalY",
+            "description": "Y component of the surface normal at the current ray hit point (-1 to 1). Valid inside On ray hit.",
+            "params": {}
+          },
+          "RayHitReflectAngle": {
+            "translated-name": "RayHitReflectAngle",
+            "description": "Angle in degrees of the reflected ray direction (0-360). Valid inside On ray hit.",
+            "params": {}
+          },
+          "RayHitReflectX": {
+            "translated-name": "RayHitReflectX",
+            "description": "World X of the reflected ray endpoint. Computed from the hit point along the reflected direction for the remaining radius distance. Valid inside On ray hit.",
+            "params": {}
+          },
+          "RayHitReflectY": {
+            "translated-name": "RayHitReflectY",
+            "description": "World Y of the reflected ray endpoint. Computed from the hit point along the reflected direction for the remaining radius distance. Valid inside On ray hit.",
             "params": {}
           }
         }

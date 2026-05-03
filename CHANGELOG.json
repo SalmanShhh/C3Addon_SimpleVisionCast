@@ -8,5 +8,10 @@
     "added": "initial addon version",
     "changed": "",
     "fixed": ""
+  },
+  "0.2.0.0": {
+    "added": "Now Works correctly.\n- Added Mesh Stagger Rendering \n- Added Ray Density\n",
+    "changed": "",
+    "fixed": "- Fixed Mesh Rendering.\n"
   }
 }
