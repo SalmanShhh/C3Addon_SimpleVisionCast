@@ -22,8 +22,9 @@ Simple Vision Cast is a Construct 3 behavior that computes a **visibility polygo
 14. [System Use Cases](#14-system-use-cases)
 15. [Game Use Cases](#15-game-use-cases)
 16. [Using Simple Vision Cast with the Built-in Line of Sight Behavior](#16-using-simple-vision-cast-with-the-built-in-line-of-sight-behavior)
-17. [Scripting (C3 Script / JavaScript)](#17-scripting-c3-script--javascript)
-18. [Tips and Common Mistakes](#18-tips-and-common-mistakes)
+17. [Using Simple Vision Cast with the Drawing Canvas Addon](#17-using-simple-vision-cast-with-the-drawing-canvas-addon)
+18. [Scripting (C3 Script / JavaScript)](#18-scripting-c3-script--javascript)
+19. [Tips and Common Mistakes](#19-tips-and-common-mistakes)
 
 ---
 
@@ -1203,9 +1204,263 @@ Event: System > Every tick
 | Polygon UID scan + confirm | Identify which objects are hit | Confirm clear line to each hit object |
 | Adaptive LoS range | PolygonArea drives LoS range value | Adjustable range from SVC input |
 
+### Other Line of Sight combination use cases
+
+**Multiplayer games with peer-to-peer visibility** use SVC as a local optimization and LoS as a network authority check. Each client computes its own SVC cones; the server uses LoS to verify shots, spells, and detections are actually valid before applying effects. The broad phase keeps network traffic low; the narrow phase ensures cheat-proof gameplay.
+
+**Procedural dungeon games** combine SVC fog-of-war with LoS verification - the player explores a dynamically generated level, and their vision cone reveals new rooms. When they fire a ranged weapon through a door, LoS checks confirm whether the shot actually passes through the opening or is blocked by the frame.
+
+**Swarm AI systems** use SVC on the player or leader unit to quickly identify nearby swarm members, then LoS on each member to confirm they have a clear path back to the leader before signaling a regroup event. This saves the cost of checking hundreds of LoS rays per frame.
+
+**Turn-based tactics games** run SVC once per turn to show the player's attack range and threat radius, then use LoS when the player confirms an action to verify the line exists. The combination gives clear visual feedback without redundant raycasting each frame.
+
+**Beam weapons and lasers** use SVC as the sweep envelope and LoS as the instantaneous hit test. A sweeping laser is visualized by SVC's mesh; when it settles on a target, a LoS check confirms the hit and applies damage.
+
+**Guard patrol AI with memory** uses SVC to detect the player in real time and LoS to confirm visual contact. Once the guard spots the player, the guard "remembers" the player's last known position for several seconds even if the LoS breaks, creating realistic chase behavior.
+
+**Spell-casting systems with line-of-effect validation** use SVC to show the caster's visible area and LoS to check each targeted enemy or ally is actually reachable before applying the spell effect.
+
+**Fog-of-war with line-of-sight verification** combines SVC's persistent polygon with LoS's frame-accurate checks, so a unit can "see" a far-off enemy within the fog polygon but the actual hit only registers if LoS confirms no walls are in between.
+
 ---
 
-## 17. Scripting (C3 Script / JavaScript)
+## 17. Using Simple Vision Cast with the Drawing Canvas Addon
+
+The **Drawing Canvas** addon is a powerful tool for programmatic 2D graphics. Combined with Simple Vision Cast, it opens up possibilities for custom polygon rendering, data visualization, and complex visual effects that go beyond mesh deformation. While SVC's mesh system is optimized for real-time rendering, Drawing Canvas excels at overlays, debug displays, post-processing, and cases where you need precise pixel-level control.
+
+### Why combine SVC with Drawing Canvas?
+
+| Use case | Why it works |
+|---|---|
+| **Debug visualization** | Draw polygon vertices, ray directions, and hit points as overlay guides for development |
+| **Custom polygon styling** | Render the polygon with strokes, gradients, or patterns not possible with mesh blending |
+| **Multi-layer vision stacking** | Composite multiple SVC polygons on canvas with additive, multiplicative, or custom blend modes |
+| **Post-process lighting effects** | Extract polygon data and feed it into canvas-based bloom, blur, or glow effects |
+| **Minimap integration** | Draw the visibility polygon scaled and rotated onto a minimap canvas |
+| **Recording and replay** | Capture polygon frames to canvas and export as image data for analysis or replays |
+| **Procedural terrain overlay** | Layer SVC vision polygon over a procedurally drawn terrain map |
+
+### Drawing the visibility polygon on canvas
+
+The basic pattern is: on each `On polygon updated` trigger, loop through the polygon points and draw them to the canvas.
+
+```javascript
+// In C3 script
+const svc = myGuard.behaviors.SimpleVisionCast;
+const canvas = runtime.objects.DebugCanvas.getFirstInstance();
+
+svc.addEventListener("OnPolygonUpdated", () => {
+  canvas.clearCanvas(runtime.bandColor(0, 0, 0, 0));
+  
+  const count = svc._countPolyPoints();
+  const points = [];
+  
+  for (let i = 0; i < count; i++) {
+    points.push([svc._getPolyPointX(i), svc._getPolyPointY(i)]);
+  }
+  
+  // Draw filled polygon
+  canvas.fillPoly(points, runtime.bandColor(200, 255, 150, 100));
+  
+  // Draw outline
+  canvas.linePoly(points, runtime.bandColor(255, 255, 255, 255), 2, "butt");
+});
+```
+
+### Event sheet approach: drawing via canvas actions
+
+If you prefer events over script, pair SVC expressions with canvas actions:
+
+```
+Event: Guard.SimpleVisionCast > On polygon updated
+  Action: DebugCanvas > Clear canvas to color 0, 0, 0, 0
+  Sub-event: For i = 0 to Guard.SimpleVisionCast.CountPolyPoints - 1
+    Action: DebugCanvas > Draw line from
+      Guard.X, Guard.Y
+      to Guard.SimpleVisionCast.GetPolyPointX(i), Guard.SimpleVisionCast.GetPolyPointY(i)
+      color 200, 255, 100, thickness 1
+```
+
+This approach is simpler to set up but loops through every point every frame, which is slower than the scripted polygon fill method.
+
+### Minimap: scaling and rotating SVC polygon
+
+A common use case is rendering the SVC polygon on a minimap canvas, scaled and offset.
+
+```javascript
+const minimapScale = 0.2;  // 1 world pixel = 0.2 map pixels
+const minimapX = 50;        // top-left corner of minimap canvas
+const minimapY = 50;
+
+svc.addEventListener("OnPolygonUpdated", () => {
+  const count = svc._countPolyPoints();
+  const scaled = [];
+  
+  for (let i = 0; i < count; i++) {
+    const wx = svc._getPolyPointX(i);
+    const wy = svc._getPolyPointY(i);
+    // Scale and translate to minimap space
+    scaled.push([
+      minimapX + wx * minimapScale,
+      minimapY + wy * minimapScale
+    ]);
+  }
+  
+  minimapCanvas.fillPoly(scaled, runtime.bandColor(255, 200, 100, 150));
+  minimapCanvas.linePoly(scaled, runtime.bandColor(255, 255, 255, 200), 1, "butt");
+});
+```
+
+### Debug overlay: marking ray hits
+
+Visualize which obstacles the rays are hitting by drawing circles at hit points and lines to unhit open-space rays.
+
+```javascript
+const debugCanvas = runtime.objects.DebugOverlay.getFirstInstance();
+
+svc.addEventListener("OnPolygonUpdated", () => {
+  const count = svc._countPolyPoints();
+  
+  debugCanvas.clearCanvas(runtime.bandColor(0, 0, 0, 0));
+  
+  for (let i = 0; i < count; i++) {
+    const px = svc._getPolyPointX(i);
+    const py = svc._getPolyPointY(i);
+    const uid = svc._getPolyHitUID(i);
+    
+    if (uid >= 0) {
+      // Hit an obstacle - draw a red circle
+      debugCanvas.fillEllipse(px, py, 4, 4, runtime.bandColor(255, 0, 0, 200));
+    } else {
+      // Open ray - draw a blue dot
+      debugCanvas.fillEllipse(px, py, 2, 2, runtime.bandColor(0, 0, 255, 150));
+    }
+  }
+});
+```
+
+### Composite multiple vision cones
+
+Layer multiple SVC polygons on one canvas to visualize guard overlaps or faction-specific vision blending.
+
+```javascript
+const compositeCanvas = runtime.objects.VisionComposite.getFirstInstance();
+
+function drawSVCPolygon(canvas, svc, color) {
+  const count = svc._countPolyPoints();
+  const points = [];
+  for (let i = 0; i < count; i++) {
+    points.push([svc._getPolyPointX(i), svc._getPolyPointY(i)]);
+  }
+  canvas.fillPoly(points, color);
+}
+
+// Draw all guards' cones additively
+compositeCanvas.clearCanvas(runtime.bandColor(0, 0, 0, 255));
+for (const guard of runtime.objects.Guard.getAllInstances()) {
+  const svc = guard.behaviors.SimpleVisionCast;
+  drawSVCPolygon(compositeCanvas, svc, runtime.bandColor(100, 255, 100, 80));
+  // Additive blending on the canvas layer creates bright zones where cones overlap
+}
+```
+
+### Exporting polygon data as image
+
+Capture the canvas and save it for analysis, replay, or machine learning training.
+
+```javascript
+svc.addEventListener("OnPolygonUpdated", () => {
+  const count = svc._countPolyPoints();
+  const points = [];
+  for (let i = 0; i < count; i++) {
+    points.push([svc._getPolyPointX(i), svc._getPolyPointY(i)]);
+  }
+  
+  recordingCanvas.clearCanvas(runtime.bandColor(0, 0, 0, 255));
+  recordingCanvas.fillPoly(points, runtime.bandColor(255, 255, 255, 255));
+  
+  // Save every 10 updates for replay or analysis
+  if (runtime.globalVars.updateCount++ % 10 === 0) {
+    recordingCanvas.saveImage("image/png", 1.0);
+  }
+});
+```
+
+### Bloom and glow effect on visibility polygon
+
+Render the polygon to canvas, apply a blur effect, and composite back to the main layer for a soft glow.
+
+```javascript
+const backbufferCanvas = runtime.objects.BloomBuffer.getFirstInstance();
+const finalCanvas = runtime.objects.CompositeOutput.getFirstInstance();
+
+svc.addEventListener("OnPolygonUpdated", () => {
+  // Step 1: Draw polygon to backbuffer
+  backbufferCanvas.clearCanvas(runtime.bandColor(0, 0, 0, 0));
+  const count = svc._countPolyPoints();
+  const points = [];
+  for (let i = 0; i < count; i++) {
+    points.push([svc._getPolyPointX(i), svc._getPolyPointY(i)]);
+  }
+  backbufferCanvas.fillPoly(points, runtime.bandColor(255, 200, 100, 200));
+  
+  // Step 2: Composite blurred version (would require blur shader or multiple passes)
+  // For now, just draw directly with reduced opacity for a simple glow
+  finalCanvas.clearCanvas(runtime.bandColor(0, 0, 0, 0));
+  finalCanvas.fillPoly(points, runtime.bandColor(255, 200, 100, 100));
+});
+```
+
+### Performance considerations
+
+- **Polygon drawing is CPU-bound**, not GPU-bound like mesh deformation. For many overlapping polygons, consider drawing only every N updates.
+- **Canvas saveImage is slow** - only call it on-demand, not every frame.
+- **Use lower-resolution canvases** for debug visualizations; full-resolution canvases are expensive to clear and fill each frame.
+- **Stagger polygon drawing** across multiple canvases by using different `On polygon updated` listeners on different SVC instances.
+
+### Event sheet example: drawing with shapes layer
+
+For a simple debug display without scripting, use a dedicated canvas object and shape drawing:
+
+```
+Event: Guard.SimpleVisionCast > On polygon updated
+  Action: DebugShapesCanvas > Clear canvas
+  Action: DebugShapesCanvas > Set draw blend mode to additive
+  Sub-event: For i = 0 to Guard.SimpleVisionCast.CountPolyPoints - 1
+    Action: DebugShapesCanvas > Draw line
+      From: Guard.X, Guard.Y
+      To: Guard.SimpleVisionCast.GetPolyPointX(i), Guard.SimpleVisionCast.GetPolyPointY(i)
+      Color: rgb(100, 255, 100)
+      Thickness: 2
+```
+
+This creates a visible debug overlay without affecting game performance.
+
+### Other Drawing Canvas use cases
+
+**Heatmaps for developer analytics** visualize which areas of the level are most frequently within player vision cones. Each polygon update writes to a heatmap canvas, accumulating brightness at frequently-seen locations. Export the heatmap at level end to identify level design issues or opportunities.
+
+**AI vision debugging during development** shows real-time rays from SVC on a debug canvas layer, with different colors for hit vs. unhit rays. Developers can see exactly why an AI is or isn't detecting something without console spam.
+
+**Procedurally generated vision zones** use canvas to draw complex, multi-textured SVC polygons overlaid on procedural terrain. The polygon acts as a mask or overlay for dynamically generated maps.
+
+**Composite faction vision** on a shared strategy map draws each faction's SVC cones on a single canvas layer with transparent blending, so players can see where each faction's control zones overlap.
+
+**Replay visualization** saves a sequence of SVC polygons to canvas over time, allowing players or developers to scrub through a replay and see exactly what each character could see at any moment.
+
+**Accessibility overlays** render SVC polygons with high-contrast colors and outlines to help colorblind players or those with low vision more clearly distinguish between lit and shadowed areas.
+
+**Real-time pathfinding visualization** uses canvas to draw SVC polygons alongside computed pathfinding routes, so developers can verify AI movement respects line-of-sight occlusion correctly.
+
+**Lightmap baking visualization** pre-computes SVC polygons at grid positions across a level and saves them to canvas, creating a baked lightmap for offline use in performance-critical scenarios.
+
+**Multiplayer spectator mode** draws all players' vision cones on a shared canvas overlay, letting spectators or tournament organizers see the full strategic picture of which areas are visible to whom.
+
+**Screen-space ambient occlusion interaction** computes SVC polygons and feeds them into a canvas-based SSAO simulation to darken areas in shadows more convincingly than mesh deformation alone.
+
+---
+
+## 18. Scripting (C3 Script / JavaScript)
 
 ### Accessing the behavior
 
@@ -1346,7 +1601,7 @@ runOnStartOfLayout(() => {
 
 ---
 
-## 18. Tips and Common Mistakes
+## 19. Tips and Common Mistakes
 
 - **The sprite must be large enough to hold the mesh.** If the host sprite is smaller than the `Range` value, polygon vertices outside the sprite bounds will be clipped. Make the sprite at least `Range × 2` in both width and height, centered at the origin.
 
