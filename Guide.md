@@ -1,6 +1,8 @@
-# Simple Vision Cast Guide
+# Simple Vision Cast — Developer Guide
 
-**Simple Vision Cast** is a Construct 3 behavior that provides **mesh-driven line-of-sight detection and dynamic lighting** for world objects. It performs real-time raycasting around an object to build a **visibility polygon** (the area the object can "see"), writes that shape to the object's mesh deformer, and triggers events when tagged objects enter or exit the line of sight. Perfect for patrol AI detection, dynamic fog-of-war, vision cones, or any mechanic that needs to know what an object can see in the world.
+Simple Vision Cast is a Construct 3 behavior that computes a **visibility polygon** around any object in real time using raycasting. It shapes the host object's mesh into that polygon every tick, giving you hardware-accelerated light cones, dynamic fog-of-war, detection radii, and searchlight effects without writing any shader code. It doubles as a spatial query engine - any event sheet or script can ask "is this world point visible right now?" making it equally useful for stealth AI, lighting, exploration, and gameplay logic.
+
+---
 
 ## Table of Contents
 
@@ -8,1907 +10,1360 @@
 2. [Project Setup](#2-project-setup)
 3. [Plugin Properties](#3-plugin-properties)
 4. [Obstacle Modes](#4-obstacle-modes)
-5. [Ray Casting and Visibility](#5-ray-casting-and-visibility)
-6. [Line-of-Sight Detection](#6-line-of-sight-detection)
-7. [Mesh Integration](#7-mesh-integration)
-8. [Performance Tuning](#8-performance-tuning)
-9. [Actions Reference](#9-actions-reference)
-10. [Conditions Reference](#10-conditions-reference)
-11. [Expressions Reference](#11-expressions-reference)
-12. [Triggers Reference](#12-triggers-reference)
-13. [System Use Cases](#13-system-use-cases)
-14. [Game Use Cases](#14-game-use-cases)
-15. [C3 Debugger](#15-c3-debugger)
-16. [Scripting](#16-scripting)
-17. [Surface Normals and Reflections](#17-surface-normals-and-reflections)
+5. [Cone and Facing Angle](#5-cone-and-facing-angle)
+6. [Mesh Deformation and Rendering](#6-mesh-deformation-and-rendering)
+7. [Point-in-Visibility Queries](#7-point-in-visibility-queries)
+8. [Polygon Data Access](#8-polygon-data-access)
+9. [Performance Tuning](#9-performance-tuning)
+10. [Actions Reference](#10-actions-reference)
+11. [Conditions Reference](#11-conditions-reference)
+12. [Expressions Reference](#12-expressions-reference)
+13. [Triggers Reference](#13-triggers-reference)
+14. [System Use Cases](#14-system-use-cases)
+15. [Game Use Cases](#15-game-use-cases)
+16. [Using Simple Vision Cast with the Built-in Line of Sight Behavior](#16-using-simple-vision-cast-with-the-built-in-line-of-sight-behavior)
+17. [Scripting (C3 Script / JavaScript)](#17-scripting-c3-script--javascript)
 18. [Tips and Common Mistakes](#18-tips-and-common-mistakes)
 
 ---
 
 ## 1. Core Concepts
 
-### The Problem This Addon Solves
+### The problem this addon solves
 
-Without Simple Vision Cast, detecting line-of-sight in Construct 3 means manually casting multiple rays in events, checking each one for collisions, then rebuilding the hit data every frame. This is tedious, error-prone, and expensive. Simple Vision Cast automates the entire process: it casts rays around an object in a cone or full circle, collects all the hit points, builds a polygon from them, triggers events when objects enter/exit that polygon, and optionally writes the polygon to a mesh deformer so you can **visualize the light or vision cone in real-time**.
+The built-in Construct 3 tools for visibility are binary: two objects either have a clear line between them or they don't. There is no native way to compute *how much of the world* a given object can see the continuous region bounded by all visible angles. Calculating that by hand means casting hundreds of rays in script, collating the hit points, sorting them into a polygon, and then spending more time figuring out how to render it. Simple Vision Cast does all of that for you in an optimised internal loop, exposes the resulting polygon to your event sheet, and writes it directly to the host object's mesh so the renderer shows it automatically.
 
-### Key Design Decisions
+### Key design decisions
 
-- **Behavior-based:** Simple Vision Cast is a **behavior** that attaches to individual world objects (sprites, tiledbackgrounds, etc.). Each instance has its own visibility polygon and configuration—no global state.
-- **Tick-driven updates:** By default, visibility recalculates every frame. You control this with **Detection Interval** (detection events can be less frequent than polygon updates).
-- **Obstacle flexibility:** Choose how to define obstacles: all Solid-behavior instances, a specific list of object types, or instances tagged with a certain tag. Switch modes on the fly.
-- **Mesh integration:** The visibility polygon can be written to the host object's mesh deformer, making the light cone or vision radius visible on screen with full sprite effects and blending.
+Simple Vision Cast is a **behavior**, not a plugin. You add it to an existing Construct object, typically a sprite with additive blending set up as a light, or an invisible rectangle used purely for detection. The behavior reads the host object's position and angle to define the ray origin and the cone orientation. The resulting visibility polygon is a fan of world-space coordinates emanating from that origin.
 
-### Key Concepts at a Glance
+The host object's mesh is used for rendering. This means the object must have a finite size on screen, a 1×1-pixel sprite will deform its mesh, but nothing visible will appear. Use a sprite sized at least as large as the intended `Range`.
 
-| Concept | Meaning |
-|---|---|
-| **Visibility Polygon** | The closed shape describing the area the object can see. Built by casting rays and connecting hit points. |
-| **Ray** | A single line cast outward from the object's origin. Primary rays are spaced evenly; corner rays snap to obstacle edges. |
-| **Obstacle Candidate** | An object in the world that *might* block rays (Solid behavior, a custom object type, or tagged instance). |
-| **Detection Tag** | A tag assigned to objects you want to track enter/exit events for. Independent from obstacle tags. |
-| **Line of Sight (LoS)** | A tagged object is considered in LoS if its center point lies inside the visibility polygon. |
-| **Mesh Deformation** | The host object's mesh surface is warped so its top row aligns with the visibility polygon boundary. |
+**Mesh deformation and gameplay logic are independent.** You can disable mesh writes entirely and still use `IsPointInVisibility` for stealth checks. You can also enable mesh deformation on an invisible layer to drive a Light Effect mask without the mesh being the final visual.
 
-### Scenarios Where This Addon Excels
+### Key concepts at a glance
 
-- **Enemy AI patrol and detection**: Guard enemies have a cone-of-view behavior; when a player (detection-tagged) enters the guard's vision cone, trigger alert events and start pursuit.
-- **Fog-of-war mechanics**: Each player-controlled unit emits a circular light; terrain and obstacles occlude the light; the mesh deformer renders the lit area, updating the fog texture in real-time.
-- **Vision cones and searchlights**: Dynamically morph a searchlight sprite based on obstacles in the environment. Use raycasting to create realistic light spread around walls.
-- **Interactive cover systems**: Before firing, check if an enemy has LoS to the player. Build actual sightlines in the level editor, not just distance checks.
-- **Dynamic lighting**: Combine Simple Vision Cast with a particle emitter to render realistic light spillage; the polygon tells you where to draw glow effects.
-- **NPC awareness and stealth**: Track which objects an NPC can currently see. If the player hides behind an obstacle (LoS broken), the NPC loses the player's location.
-- **Level design preview**: Use a placed light instance to visualize which areas of the level are illuminated before shipping.
+| Term | Meaning |
+|------|---------|
+| **Visibility polygon** | The continuous region of world space that the ray origin can "see", bounded by obstacles |
+| **Ray origin** | The host object's current centre position; the fan source |
+| **Cone of view** | The angular arc (in degrees) the rays sweep; 360 = full circle |
+| **Facing angle offset** | Rotates the cone relative to the host object's own angle property |
+| **Obstacle mode** | How obstacles are identified: Solid behavior, Custom objects, or Tag |
+| **Mesh stagger** | Skipping mesh writes to save GPU bandwidth while keeping LOS logic accurate |
+
+### Scenarios where this addon excels
+
+- **Dynamic lighting in dark levels** - place a light-sprite with additive blending; the mesh deforms to cast realistic shadows around walls.
+- **Stealth guard detection cones** - give each guard a directional cone; check `IsPointInVisibility` against the player position each tick.
+- **Fog of war for real-time strategy** - maintain one SVC instance per unit; union the polygons or use per-layer masking.
+- **Environmental hazard radii** - a spinning trap emits a visibility polygon; anything inside is damaged.
+- **Searchlight puzzles** - a rotating spotlight with a narrow cone; the player must cross without being seen.
+- **Investigation systems** - reveal interactable objects only when they fall inside the player's cone of view.
+- **Sonar / radar pings** - expand and contract the range dynamically to animate a pulse effect.
 
 ---
 
 ## 2. Project Setup
 
-### Step 1: Add Simple Vision Cast to Your Project
+### Step 1 — Add the behavior
 
-1. In **Construct 3**, open your project.
-2. Go to **Project** > **Install New Addon**.
-3. Select the **Simple Vision Cast** addon file (`salmanshh_simplevisioncast-X.X.X.c3addon`).
-4. The addon is now available in your object types.
+Select any sprite in your layout, open the Properties panel, click **Add behavior**, and choose **Simple Vision Cast**. The behavior is per-instance.
 
-### Step 2: Place a Host Object
+### Step 2 — Configure the sprite
 
-1. Create a new **event sheet**.
-2. In the **Layout editor**, place a **Sprite** in the level (this will host the Simple Vision Cast behavior).
-3. Right-click the sprite and select **Add behavior**.
-4. Search for **"Simple Vision Cast"** and add it.
-5. The sprite is now a light/vision source.
+The host sprite will have its mesh deformed into the visibility polygon. Use a white, fully opaque sprite with additive blending for a light cone effect. Set its origin to the point the light should emanate from (usually the center). Size it generously, at least as wide and tall as the intended range so the mesh has vertices to work with.
 
-### Step 3: Configure Obstacles and Detection
+### Step 3 — Set properties
 
-1. Select the sprite and open the **Properties panel** (right side).
-2. Set the following:
-   - **Obstacle mode**: Choose how to define what blocks light (`Solid behaviour`, `Custom objects`, or `Tag`).
-   - **Light radius**: Maximum distance rays travel (e.g., 300 pixels).
-   - **Ray density**: Percentage (1-100) controlling rays per degree of cone angle. 50% for balanced quality, lower for performance.
-   - **Detection tag** (optional): Tag name for objects to track entry/exit (e.g., `"player"`).
-   - **Mesh deform enabled**: Check this to visualize the light cone on the sprite's mesh.
+In the Properties panel, set `Range`, `Cone`, `Ray density`, and `Obstacle mode` for your use case. For a torch, `Range = 250`, `Cone = 60`, `Ray density = 75%`. For a guard, `Range = 300`, `Cone = 90`, `Ray density = 50%`.
 
-### Step 4: Create Detection Events
+### Step 4 — Add obstacle objects
 
-In your event sheet:
+If using **Tag** mode, tag your wall objects with the string you placed in `Obstacle tag` (e.g. `"wall"`). If using **Solid** mode, ensure wall objects have the built-in Solid behavior.
+
+### Step 5 — First working example (player torch)
 
 ```
-Event: Simple Vision Cast: On object enter line of sight
-  Action: [Your reaction, e.g., "Set enemy.state to 'alert'"]
+Event: System > Every tick
+  Action: Torch.SimpleVisionCast > Set facing angle to Torch.Angle
 
-Event: Simple Vision Cast: On object exit line of sight
-  Action: [Your reaction, e.g., "Set enemy.state to 'idle'"]
+Event: Torch.SimpleVisionCast > On polygon updated
+  Condition: Torch.SimpleVisionCast > Point Player.X, Player.Y is in visibility
+    Action: Text > Set text to "Player is lit!"
 ```
 
-### Step 5: Check the Result
-
-1. **Preview** the layout.
-2. The sprite now casts rays and detects line-of-sight to objects tagged with your **Detection tag**.
-3. If you enabled **Mesh deform**, the sprite's mesh warps to show the visibility boundary.
+The mesh updates automatically - no explicit "render" action is needed.
 
 ---
 
 ## 3. Plugin Properties
 
 | Property | Type | Default | Description |
-|---|---|---|---|
-| **Light radius** | Float (pixels) | 300 | Maximum distance rays travel. Rays that don't hit an obstacle stop at this distance. |
-| **Ray arc** | Float (degrees) | 360 | Angular sweep centered on the host's facing angle. `360` = full circle; `90` = quarter circle. |
-| **Ray density** | Float (1-100) | 50 | Percentage of ray density. 100% = 1 ray per degree of cone angle. Higher = smoother polygon, lower = better performance. |
-| **Obstacle mode** | Combo | `Solid behaviour` | Determines which objects block rays: `Solid behaviour` (all Solid-behavior instances), `Custom objects` (specified object types), or `Tag` (instances with a certain tag). |
-| **Obstacle object** | Object picker | *(none)* | Seed object type for `Custom objects` mode. Used to populate the obstacle list in the Properties panel. |
-| **Obstacle tag** | Text | `"wall"` | Tag name for obstacles when in `Tag` mode. Instances with this tag block rays. |
-| **Detection tag** | Text | *(empty)* | Tag name for objects to track. When non-empty, Simple Vision Cast fires `On object enter/exit LoS` events for tagged objects. Leave empty to disable detection. |
-| **Facing angle** | Float (degrees) | 0 | Offset added to the host's angle to rotate the ray cone. Useful if the host sprite doesn't face the direction you want rays cast. |
-| **Mesh deform enabled** | Checkbox | Yes | When checked, writes the visibility polygon to the host's mesh deformer each tick. The mesh top row aligns with the polygon boundary. |
-| **Detection interval** | Float (seconds) | 0 | Seconds between line-of-sight detection sweeps (enter/exit events). `0` = every tick. Use a larger value to skip detections on some frames for performance. |
-| **Enabled** | Checkbox | Yes | When checked, the behavior is active. Uncheck to pause raycasting and mesh updates at startup. Toggle at runtime with the **Set enabled** action. |
+|----------|------|---------|-------------|
+| **Range** | Float (px) | 300 | Maximum ray travel distance. Higher values are more expensive. |
+| **Cone** | Float (°) | 360 | Angular sweep of the visibility fan. 360 = omnidirectional. |
+| **Ray density** | Percent | 100% | Rays cast per degree of cone. Lower values are faster but produce blockier polygons. |
+| **Obstacle mode** | Combo | Solid | How obstacles are detected: Solid behavior, Custom objects, or Tag. |
+| **Obstacle tag** | Text | "wall" | Tag string used when Obstacle mode is Tag. Comma-separate for multiple tags. |
+| **Mesh deform enabled** | Check | true | Whether the visibility polygon is written to the host mesh each update. |
+| **Mesh update interval** | Integer (frames) | 0 | Frames to skip between mesh writes. 0 = write every frame. |
+| **Mesh stagger mode** | Combo | Stable | How skipped-frame mesh writes behave: Stable (freeze) or Hybrid (live LOS, staggered mesh). |
+| **Enabled** | Check | true | Master switch. When false, raycasting and mesh updates stop entirely. |
 
 ---
 
 ## 4. Obstacle Modes
 
-Simple Vision Cast offers three ways to define what blocks rays:
+Simple Vision Cast offers three ways to decide which objects block rays. Choose the mode that matches your scene structure.
 
-### Solid Behaviour Mode
+### Solid behavior mode
 
-All objects with the **Solid** behavior enabled contribute to raycasting. This is the default and the simplest setup. Just enable the Solid behavior on your walls, floors, and obstacles.
-
-```
-Event: On start of layout
-  Action: MyLight: Set obstacle mode -> "Solid behaviour"
-  // Now all Solid-behavior instances block rays
-```
-
-**Pros:** Simple, no configuration needed. **Cons:** Includes all Solid instances, even if you only want certain walls to block light.
-
-### Custom Objects Mode
-
-Specify exactly which object **types** (sprites, tiledbackgrounds, etc.) block rays. Add or remove types on the fly.
+All objects in the layout that have Construct's built-in **Solid** behavior will block rays. This is the fastest mode to set up and requires zero tag management. The downside is that every Solid object blocks rays - if some solid objects should be walkable (like platform floors) but transparent to light, you need a different mode.
 
 ```
-Event: On start of layout
-  Action: MyLight: Set obstacle mode -> "Custom objects"
-  Action: MyLight: Add obstacle object -> Wall
-  Action: MyLight: Add obstacle object -> DynamicCover
-  // Now only instances of Wall and DynamicCover block rays
-
-Event: Player destroys an obstacle
-  Action: MyLight: Remove obstacle object -> DynamicCover
+Event: System > On start of layout
+  // No setup needed, all Solid objects automatically block rays
 ```
 
-**Pros:** Precise control. **Cons:** Requires adding each object type explicitly.
+### Custom objects mode
 
-### Tag Mode
-
-All instances tagged with a specific tag block rays. Useful for marking obstacles dynamically.
+You register specific object types. Only instances of those types will be candidates. This mode is ideal when your obstacles share no common tag or behavior but you have a finite, known set of types.
 
 ```
-Event: On start of layout
-  Action: MyLight: Set obstacle mode -> "Tag"
-  Action: MyLight: Set obstacle tag -> "opaque"
-  // Now all instances tagged "opaque" block rays
-
-Event: A door opens
-  Action: Door: Remove tag "opaque"
-  // Light passes through the door
+Event: System > On start of layout
+  Action: Guard.SimpleVisionCast > Set obstacle mode to Custom objects
+  Action: Guard.SimpleVisionCast > Add Wall as an obstacle object
+  Action: Guard.SimpleVisionCast > Add Crate as an obstacle object
+  Action: Guard.SimpleVisionCast > Add Door as an obstacle object
 ```
 
-**Pros:** Dynamic and flexible. **Cons:** Requires tagging instances in advance.
+### Tag mode
 
----
-
-## 5. Ray Casting and Visibility
-
-### How Rays Work
-
-Simple Vision Cast casts rays in a circular or cone pattern around the host object:
-
-1. **Primary rays** are spaced evenly across the ray arc (controlled by **Ray count** and **Ray arc** properties).
-2. **Corner rays** snap to edges of obstacle polygons, creating smooth boundaries where light wraps around corners.
-3. Each ray stops when it hits an obstacle or reaches the **Light radius** limit.
-4. The hit points (or radius boundary) form the vertices of the **visibility polygon**.
-
-### Ray Configuration
-
-| Property | Impact |
-|---|---|
-| **Ray density** | Higher density = smoother polygon but slower. 25% for performance, 50% for balance, 100% for precision. |
-| **Ray arc** | `360°` = full circle (all-around vision). `90°` = quarter circle (narrow cone). |
-| **Light radius** | Larger radius = bigger detection area but more distant obstacles to test. |
-| **Facing angle** | Rotates the cone. Use if the sprite doesn't face the direction you want light cast. |
-
-### Example: Setting Up a 90° Vision Cone
+Only instances tagged with the obstacle tag string are candidates. This is the most flexible and performant mode for large scenes - you can include or exclude individual instances dynamically.
 
 ```
-Event: On start of layout
-  Action: Guard: Set ray arc -> 90
-  Action: Guard: Set ray count -> 32
-  Action: Guard: Set light radius -> 200
-  // Guard has a 90° vision cone, 200 pixels deep, with 32 rays
+Event: System > On start of layout
+  Action: Light.SimpleVisionCast > Set obstacle mode to Tag
+  Action: Light.SimpleVisionCast > Set obstacle tag to "wall"
+
+Event: Button clicked (add fence)
+  Action: Fence > Add instance variable tag "wall"
+  // SVC picks it up on the next rebuild automatically
 ```
 
-### Polygon Update Events
-
-After rays are cast, Simple Vision Cast fires the **On polygon updated** trigger (once per tick if raycasting happened).
+### Switching modes at runtime
 
 ```
-Event: Simple Vision Cast: On polygon updated
-  Action: Logger: Log expression "Poly points: " & Guard.CountPolyPoints
-  // Fires after each raycast, logging polygon complexity
-```
-
-### Ray Hit Events
-
-When a primary ray hits an obstacle, the **On ray hit** trigger fires. You can filter by obstacle tag (if in Tag mode) or listen to all hits.
-
-```
-Event: Simple Vision Cast: On ray hit
-  Action: [Trigger the obstacle, e.g., "Highlight the wall just hit"]
-
-Event: Simple Vision Cast: On ray hit (filter by tag "opaque")
-  Action: [Only triggers if the hit obstacle was tagged "opaque"]
+Event: Player picks up "Thermal Goggles" item
+  Action: Player.SimpleVisionCast > Set obstacle mode to Custom objects
+  Action: Player.SimpleVisionCast > Clear all obstacle objects
+  Action: Player.SimpleVisionCast > Add ThermalWall as an obstacle object
+  // Thermal walls are a separate object type; normal walls no longer block
 ```
 
 ---
 
-## 6. Line-of-Sight Detection
+## 5. Cone and Facing Angle
 
-### Detection Tag and LoS
+The **cone of view** defines *how wide* the visibility fan is. The **facing angle offset** defines *which direction* the fan points, relative to the host object's own angle.
 
-An object is considered **in line of sight** if:
-
-1. The object is tagged with the **Detection tag** (configured in properties).
-2. The object's center point lies inside the visibility polygon.
-
-Simple Vision Cast updates the LoS set every tick (or at the interval specified by **Detection interval**) and fires events when objects enter or exit.
-
-### Detection Events
+Setting the facing angle is important for directional objects like guards or torches. If you leave the offset at 0, the cone always points in the direction of the host object's `Angle` property.
 
 ```
-Event: Simple Vision Cast: On object enter line of sight
-  Action: [The object just became visible]
-  // Use LoSEntrantUID to get the UID of the entering object
-
-Event: Simple Vision Cast: On object exit line of sight
-  Action: [The object just became hidden]
-  // Use LoSExitantUID to get the UID of the exiting object
+Event: System > Every tick
+  Action: Guard.SimpleVisionCast > Set facing angle offset to Guard.Angle
+  // Alternatively, rotate the Guard object itself and leave offset at 0
 ```
 
-### Reading Detection State
-
-You can check if an object is currently in LoS:
+For an enemy that turns to face a waypoint:
 
 ```
-Event: (some condition)
-  Condition: Simple Vision Cast: Is object in LoS -> Player
-  Action: [Yes, the Player is visible]
-
-Condition: Simple Vision Cast: Is point in visibility -> X, Y
-  Action: [Yes, the point (X, Y) is inside the polygon]
+Event: Guard reaches waypoint
+  Action: Guard > Set angle toward next waypoint
+  // The cone follows automatically because SVC reads the host angle
 ```
 
-And retrieve counts:
+For a cone that sweeps independently of the sprite angle (e.g. a camera mounted on a wall that pans):
 
 ```
-Action: HUD: Set text -> "Visible enemies: " & Guard.CountVisibleObjects
-Action: Logger: Log Guard.GetVisibleObjectUID(0)  // First visible object
-```
-
-### Example: Enemy Pursuit on Detection
-
-```
-Event: Simple Vision Cast: On object enter line of sight
-  Action: Enemy.state: Set to "pursuing"
-  Action: Enemy: Move towards Player.X, Player.Y
-
-Event: Simple Vision Cast: On object exit line of sight
-  Action: Enemy.state: Set to "searching"
-  Action: Enemy: Move to last known Player position
+Event: System > Every tick
+  Action: Camera.SimpleVisionCast > Set facing angle offset to Camera.Angle
+  Action: Camera > Set angle to 0  // keep the sprite upright
+  // The cone pans while the visual stays still
 ```
 
 ---
 
-## 7. Mesh Integration
+## 6. Mesh Deformation and Rendering
 
-### What Mesh Deformation Does
+Every tick, Simple Vision Cast rewrites the host object's mesh so its vertices trace the computed visibility polygon. No shader is needed, this is a standard Construct mesh deformation.
 
-When **Mesh deform enabled** is checked, Simple Vision Cast writes the visibility polygon to the host object's mesh deformer. Specifically:
+### Rendering a light cone
 
-- The host object must have its **Mesh deformer** enabled (set in object properties).
-- The polygon points are mapped to the mesh's **top row** (row 0), stretched horizontally across all columns.
-- All **lower rows** are pinned to a fixed normalized position (default `0.5, 0.5`), creating a cone or fan shape.
-- This causes the sprite's visual mesh to warp to match the light/vision boundary.
+1. Create a large white sprite (e.g. 700×700 px, centered origin).
+2. Set blending to **Additive** on the sprite.
+3. Add SVC with `Range = 300`, `Cone = 90`, `Mesh deform enabled = true`.
+4. Place it on a dark layer set to **Destination-out** or use a second layer with additive blending.
 
-### Visualizing the Light Cone
+The mesh deforms every frame, creating a smooth shadow-casting light.
 
-```
-// In Layout editor, select the sprite
-// Right-click: Properties
-// Mesh deformer: Enable
-// Add Simple Vision Cast behavior
+### Disabling mesh for pure gameplay use
 
-// In the project, set:
-Event: On start of layout
-  Action: MyLight: Enable mesh deform
-  // The sprite's mesh now warps to show the light cone
-```
-
-### Setting the Mesh Pin Point
-
-The lower rows of the mesh "pinch" at a point. By default, this is `(0.5, 0.5)` (center of the sprite). You can change it:
+If you only need detection logic and no visual, disable deformation to save bandwidth:
 
 ```
-Action: MyLight: Set mesh pin origin -> 0.5, 0.2
-// Lower rows now pinch toward the top-center of the sprite
+Event: System > On start of layout
+  Action: DetectionZone.SimpleVisionCast > Disable mesh deform
 ```
 
-### Mesh Reset
+Detection via `IsPointInVisibility` still works with mesh deform off.
 
-If you need to restore the mesh to its default flat state:
+### Mesh stagger modes
 
-```
-Action: MyLight: Reset mesh
-// Mesh returns to 0.0, 0.0 to 1.0, 1.0 normalized coordinates
-```
-
-### Mesh Deform Workflow
-
-1. Create a sprite with a white radial gradient (full circle, white center fading to transparent edges).
-2. Assign the sprite a **bright color** (e.g., yellow for a searchlight).
-3. Add **Simple Vision Cast** and enable **Mesh deform**.
-4. Add a **blend mode** (e.g., "Additive" or "Screen").
-5. Play the scene. The sprite's mesh warps to the light cone and blends on top of the background, creating a dynamic light effect.
-
-### Mesh Not Ready
-
-Sometimes the mesh cannot be initialized (e.g., the object type doesn't support mesh deformers). Simple Vision Cast fires **On mesh not ready** in this case:
+**Stable** (default): the mesh freezes between scheduled write ticks. The visual is choppy at low frame budgets but uses less GPU time. **Hybrid**: the visibility polygon is recomputed every frame for accurate gameplay queries, but the mesh is only written on the scheduled interval tick, blending smooth logic with reduced render cost.
 
 ```
-Event: Simple Vision Cast: On mesh not ready
-  Action: Logger: Log "Mesh deformer not available on this object type"
+Event: System > On start of layout
+  // 20 background torches — only update mesh every 3 frames
+  Action: BgTorch.SimpleVisionCast > Set mesh update interval to 3
+  Action: BgTorch.SimpleVisionCast > Set mesh stagger mode to Hybrid
+```
+
+### Setting the mesh pin origin
+
+The mesh fan radiates from a normalised position on the host sprite. Default is `(0.5, 0.5)` the centre. For a wall-mounted torch where the origin should be at the base, shift it:
+
+```
+Event: System > On start of layout
+  Action: WallTorch.SimpleVisionCast > Set mesh pin origin to 0.5, 1.0
+  // Fan origin is now the bottom-center of the sprite
 ```
 
 ---
 
-## 8. Performance Tuning
+## 7. Point-in-Visibility Queries
 
-Simple Vision Cast does two expensive things every frame: **raycasting** (rebuilding the visibility polygon) and **mesh writing** (uploading new vertex positions to the GPU). Both are controllable independently. This section explains what each control does, when to reach for it, and how to combine them for adaptive quality.
+`IsPointInVisibility(x, y)` is the primary gameplay query. It returns true when the given world-space coordinate falls inside the current visibility polygon.
 
-### Understanding the Two Cost Buckets
-
-| Operation | Controlled by |
-|---|---|
-| **Raycasting** — rebuilds the visibility polygon by casting rays against obstacle candidates. Cost scales with ray count × obstacle count. | Ray density, light radius, obstacle candidate cap, raycast skip rate |
-| **Mesh writing** — uploads new polygon vertices to the host object's mesh deformer. Cost is roughly constant per instance, but multiplied by the number of instances that update on the same frame. | Mesh update interval (frames or seconds), stagger mode |
-
-Use `LastRaycastMs` and `ObstacleCandidateCount` to measure; use the controls below to reduce cost where it hurts.
-
----
-
-### Mesh Update Interval (Frames)
-
-**Set mesh update interval** controls how many frames elapse between mesh writes. At `1` (default) the mesh is rewritten every frame. At `4` it is rewritten every fourth frame, cutting mesh-write overhead to 25% of its default cost. Visually, higher intervals mean the light shape updates less frequently — acceptable for slow-moving or stationary lights.
+### Enemy spots the player
 
 ```
-Event: On start of layout
-  Action: TorchLight: Set mesh update interval -> 3
-  // Mesh only rewrites every 3rd frame — good for a stationary torch
-
-  Action: PlayerLight: Set mesh update interval -> 1
-  // Player's light still updates every frame for sharp response
+Event: System > Every tick
+  Condition: Guard.SimpleVisionCast > Point Player.X, Player.Y is in visibility
+    Action: Guard > Set state to "Alert"
 ```
 
-Read the live value back with `ActiveMeshUpdateInterval`.
-
-### Mesh Update Interval (Time)
-
-**Set mesh update interval (time)** switches the mesh write schedule from frame-counting to wall-clock time (seconds). This is useful when your game targets variable frame rates or when you want to express light-update frequency in human terms ("update this light twice per second") rather than frame counts that mean different things at 30 fps versus 144 fps.
-
-Set it to `0` to revert to frame-based mode.
+### Multiple guards sharing a detection system
 
 ```
-Event: On start of layout
-  Action: DistantLight: Set mesh update interval (time) -> 0.1
-  // Mesh rewrites at most 10 times per second, regardless of frame rate
-
-Event: Player enters high-detail zone
-  Action: DistantLight: Set mesh update interval (time) -> 0
-  // Revert to frame-based (every frame) for maximum quality
+Event: System > Every tick (for each Guard)
+  Condition: Guard.SimpleVisionCast > Point Player.X, Player.Y is in visibility
+    Action: System > Set variable AnyGuardSeesPlayer to 1
 ```
 
-Read the live value back with `ActiveMeshUpdateIntervalTime`. When this is `> 0`, the frame-based interval is ignored.
-
-### Mesh Stagger Mode
-
-When multiple Simple Vision Cast instances share a scene, the **stagger mode** prevents them all from writing to their meshes on the same frame — which would spike GPU upload cost.
-
-| Mode | Behaviour |
-|---|---|
-| **Stable** | Each instance writes only on its scheduled interval frame. A phase offset (derived from the instance UID) spreads writes across frames automatically. |
-| **Hybrid** | Like Stable, but also writes whenever the visibility polygon refreshes mid-interval. Keeps the visual more tightly in sync with the raycasted shape at a small extra cost. |
+### Collecting items only when in view
 
 ```
-Event: On start of layout
-  // 20 background torches — distribute writes, don't care about mid-interval drift
-  Action: Torch: Set mesh stagger mode -> "Stable"
-  Action: Torch: Set mesh update interval -> 4
-
-  // Player light — always in sync with actual vision
-  Action: PlayerLight: Set mesh stagger mode -> "Hybrid"
-  Action: PlayerLight: Set mesh update interval -> 1
+Event: On collision between Player and Coin
+  Condition: Player.SimpleVisionCast > Point Coin.X, Coin.Y is in visibility
+    Action: Coin > Destroy
+    Action: HUD > Add 1 to score
 ```
 
-Read the live mode string with `ActiveMeshStaggerMode`.
-
----
-
-### Raycast Skip Rate
-
-**Set raycast skip rate** rebuilds the visibility polygon only once every N frames, regardless of the mesh stagger schedule. This is an aggressive LOD control: at `2` the polygon is rebuilt on alternate frames; at `4` it refreshes at 15 fps even in a 60 fps game.
-
-The mesh still writes on its own schedule — if raycasting is skipped this frame, the mesh reuses the most recent polygon.
+### Checking multiple targets in a loop
 
 ```
-Event: On start of layout
-  Action: BackgroundLight: Set raycast skip rate -> 3
-  // Polygon rebuilds at ~20 fps; mesh still writes on its interval
-
-Event: BackgroundLight enters player viewport
-  Action: BackgroundLight: Set raycast skip rate -> 1
-  // Restore full-rate raycasting when the light is close
-```
-
-Set to `0` or `1` to disable skipping. Read the live value with `ActiveRaycastSkipRate`.
-
-### Max Obstacle Candidates
-
-**Set max obstacle candidates** caps how many obstacle instances are considered each rebuild. Candidates are collected first, then the list is truncated before raycasting begins. This trades correctness for speed in dense scenes: distant or low-priority obstacles at the tail of the list are silently ignored.
-
-`0` means unlimited (default). Use a cap only when `ObstacleCandidateCount` is unusually high and you have confirmed that the extra candidates are not meaningfully affecting the result.
-
-```
-Event: On start of layout
-  Action: Guard: Set max obstacle candidates -> 30
-  // Guard only tests the first 30 collected obstacles per rebuild
-  // Acceptable if the layout has hundreds of small debris objects
+Event: System > Every tick
+  Action: System > Set variable VisibleEnemyCount to 0
+  Sub-event: For each Enemy
+    Condition: Player.SimpleVisionCast > Point Enemy.X, Enemy.Y is in visibility
+      Action: System > Add 1 to VisibleEnemyCount
 ```
 
 ---
 
-### Diagnostics Expressions
+## 8. Polygon Data Access
 
-These expressions expose the internals of the last rebuild. Use them in the C3 debugger overlay, a developer HUD, or directly in events to drive adaptive quality logic.
+The visibility polygon's raw point data is accessible through the `Visibility` expression group. This lets you iterate every vertex, check which obstacle a ray hit, and compute derived metrics.
 
-| Expression | Returns | What it tells you |
+### Expressions
+
+| Expression | Returns | What it gives you |
 |---|---|---|
-| `LastRaycastMs` | Float | Time in milliseconds spent rebuilding the polygon last frame. |
-| `ObstacleCandidateCount` | Integer | Number of obstacle instances tested in the last rebuild. |
-| `ActiveMeshUpdateInterval` | Integer | Current frame-based mesh write interval. |
-| `ActiveMeshUpdateIntervalTime` | Float | Current time-based mesh write interval in seconds (0 = frame mode). |
-| `ActiveMeshStaggerMode` | String | Current stagger mode: `"stable"` or `"hybrid"`. |
-| `ActiveRaycastSkipRate` | Integer | Current skip rate (0 or 1 = no skipping). |
+| `CountPolyPoints` | number | Total vertices in the current polygon |
+| `GetPolyPointX(i)` | number | World X of vertex i |
+| `GetPolyPointY(i)` | number | World Y of vertex i |
+| `GetPolyPointAngle(i)` | number | Angle (degrees) from origin to vertex i |
+| `GetPolyPointDist(i)` | number | Distance from origin to vertex i |
+| `GetPolyHitUID(i)` | number | UID of the obstacle hit at vertex i, or -1 if open space |
+| `PolygonArea` | number | Approximate area of the polygon |
+| `LastPolygonUpdateTime` | number | Runtime timestamp of the last rebuild |
+
+### Logging which obstacles a guard can see
+
+```
+Event: Guard.SimpleVisionCast > On polygon updated
+  Sub-event: For i = 0 to Guard.SimpleVisionCast.CountPolyPoints - 1
+    Condition: Guard.SimpleVisionCast.GetPolyHitUID(i) >= 0
+      Action: DebugLog > Print "Obstacle UID: " & Guard.SimpleVisionCast.GetPolyHitUID(i)
+```
+
+### Showing polygon area in a UI diagnostic
+
+```
+Event: System > Every tick
+  Action: AreaText > Set text to "Visible area: " & round(Player.SimpleVisionCast.PolygonArea) & " px²"
+```
+
+### Detecting when a specific wall enters view
+
+```
+Event: Guard.SimpleVisionCast > On polygon updated
+  Sub-event: For i = 0 to Guard.SimpleVisionCast.CountPolyPoints - 1
+    Condition: Guard.SimpleVisionCast.GetPolyHitUID(i) = TargetWall.UID
+      Action: System > Set variable TargetWallVisible to 1
+```
 
 ---
 
-### On Raycast Budget Exceeded
+## 9. Performance Tuning
 
-The **On raycast budget exceeded** trigger fires after any rebuild in which `LastRaycastMs` exceeded a threshold you provide. Use it to react to budget spikes without polling every tick.
+A single SVC instance at 300px range, 360° cone, 100% density runs in under 1 ms on a modern desktop. The cost scales with `range × density × obstacleCount`. With dozens of instances in a busy scene you need a budget strategy.
 
-```
-Event: Simple Vision Cast: On raycast took longer than 3 ms
-  Action: Self: Set ray density -> Self.ActiveRayArc * 0.9
-  // Reduce density by 10% whenever a frame goes over budget
+### Four levers in order of impact
 
-Event: Simple Vision Cast: On raycast took longer than 5 ms
-  Action: Self: Set raycast skip rate -> 2
-  // Emergency throttle: rebuild every other frame
-```
-
-> The trigger fires once per rebuild that exceeded the threshold. If every rebuild is slow, it fires every frame — guard against runaway reduction with a minimum density check.
-
----
-
-### Choosing the Right Controls
-
-| Situation | Recommended control |
+| Lever | When to use |
 |---|---|
-| Many instances, mesh cost high | Raise mesh update interval; use Stable stagger mode |
-| Single player light, needs sharp response | Keep interval at 1, use Hybrid stagger |
-| Off-screen or distant lights | Raycast skip rate 3–6 + mesh interval 4–8 |
-| Dense scene with hundreds of obstacles | Lower ray density first; add candidate cap as last resort |
-| Variable frame rate target | Use time-based mesh interval instead of frame-based |
-| Unexplained frame spikes | Read `LastRaycastMs` each frame; subscribe to budget trigger |
+| **Reduce ray density** | First choice; drop to 25–50% for background lights |
+| **Increase raycast skip rate** | Off-screen or non-critical emitters - update every 3-5 frames |
+| **Cap obstacle candidates** | Very dense scenes with hundreds of tagged obstacles |
+| **Time-based mesh interval** | Backgrounds that only need ~10 mesh writes per second |
+
+### Adaptive quality based on framerate
+
+```
+Event: System > Every tick
+  Condition: System.FPS < 50
+    Action: AllLights.SimpleVisionCast > Set ray density to 25
+    Action: AllLights.SimpleVisionCast > Set raycast skip rate to 3
+  Else condition: System.FPS >= 58
+    Action: AllLights.SimpleVisionCast > Set ray density to 75
+    Action: AllLights.SimpleVisionCast > Set raycast skip rate to 1
+```
+
+### On raycast budget exceeded
+
+```
+Event: Guard.SimpleVisionCast > On raycast took longer than 2 ms
+  Action: Guard.SimpleVisionCast > Set ray density to 30
+  Action: DebugLog > Print "SVC budget hit: " & Guard.SimpleVisionCast.LastRaycastMs & " ms"
+```
+
+### Staggering many instances
+
+Distribute update offsets across the frame by using `SetRaycastSkipRate` and varying `SetEnabled` on a round-robin timer so not all instances rebuild on the same frame.
 
 ---
 
-## 9. Actions Reference
+## 10. Actions Reference
 
 ### Setup
 
 | Action | Description |
 |---|---|
-| **Set obstacle mode** | Switch how obstacles are collected: `Solid behaviour`, `Custom objects`, or `Tag`. |
-| **Add obstacle object** | In `Custom objects` mode, add an object type to the obstacle list. |
-| **Remove obstacle object** | In `Custom objects` mode, remove an object type from the obstacle list. |
-| **Clear obstacle objects** | In `Custom objects` mode, remove all object types. |
-| **Set obstacle tag** | In `Tag` mode, set the tag that identifies obstacle instances. |
-| **Add obstacle tag** | In `Tag` mode, add an additional tag (objects matching any tag block rays). |
-| **Remove obstacle tag** | In `Tag` mode, remove a tag. |
-| **Set detection tag** | Set the tag used to identify objects for enter/exit LoS events. |
-| **Set light radius** | Update the maximum ray distance. |
-| **Set ray arc** | Update the angular sweep (e.g., 360 for full circle, 90 for quarter cone). |
-| **Set ray density** | Update the ray density percentage. Recalculates rays based on cone angle each tick. |
+| **Set range** | Sets the maximum ray travel distance in pixels. |
+| **Set cone of view** | Sets the angular sweep in degrees (1–360). |
+| **Set ray density** | Sets the ray-per-degree ratio as a percentage (1–100). |
+| **Set facing angle offset** | Rotates the cone relative to the host object's angle. |
+| **Set obstacle mode** | Switches between Solid, Custom objects, and Tag obstacle detection. |
+| **Set obstacle tag** | Replaces the active obstacle tag(s); comma-separate for multiple. |
+| **Add obstacle tag** | Adds one or more tags to the active tag set without clearing others. |
+| **Remove obstacle tag** | Removes one or more tags from the active tag set. |
+| **Add obstacle object** | Registers an object type as a custom obstacle (Custom objects mode). |
+| **Remove obstacle object** | Unregisters an object type from custom obstacle mode. |
+| **Clear obstacle objects** | Removes all registered custom obstacle types at once. |
+| **Set ray count** | Sets the number of primary rays cast each update directly. |
 
 ### Mesh
 
 | Action | Description |
 |---|---|
-| **Enable mesh deform** | Turn on mesh polygon writing. |
-| **Disable mesh deform** | Turn off mesh polygon writing. |
-| **Reset mesh** | Restore the mesh to default flat state. |
-| **Set mesh pin origin** | Set the normalized (X, Y) point that lower mesh rows pinch toward. |
-
-### Detection
-
-| Action | Description |
-|---|---|
-| **Force detection sweep** | Immediately run line-of-sight detection (useful if you want to check LoS outside the normal interval). |
-| **Clear detected objects** | Clear the visible object list without firing exit events. |
+| **Enable mesh deform** | Resumes writing the visibility polygon to the host mesh each tick. |
+| **Disable mesh deform** | Stops all mesh writes; visibility queries still work. |
+| **Reset mesh** | Flattens the mesh back to a rectangular grid and disables deformation. |
+| **Set mesh pin origin** | Moves the fan origin within the host sprite (normalized 0–1 coordinates). |
 
 ### State
 
 | Action | Description |
 |---|---|
-| **Set enabled** | Enable or disable the behavior. When disabled, raycasting and mesh updates are paused. |
+| **Set enabled** | Enables or disables the entire behavior, including raycasting. |
 
 ### Performance
 
 | Action | Description |
 |---|---|
-| **Set mesh update interval** | Set how many frames elapse between mesh writes (1–8). 1 = every frame; higher values reduce GPU overhead for slow-moving or background lights. |
-| **Set mesh update interval (time)** | Set a time-based mesh write interval in seconds. Overrides the frame-based interval while > 0. Set to 0 to revert to frame mode. Useful for consistent behavior across frame rates. |
-| **Set mesh stagger mode** | Switch between `Stable` (writes only on scheduled frames, phase-offset by UID) and `Hybrid` (also writes when the polygon refreshes mid-interval). |
-| **Set raycast skip rate** | Rebuild the visibility polygon only once every N frames. 0 or 1 = every frame; 2+ = skip N−1 frames between rebuilds. |
-| **Set max obstacle candidates** | Cap how many obstacles are tested per rebuild. 0 = unlimited. Reduces raycasting cost in dense scenes at the cost of ignoring distant obstacle candidates. |
+| **Set mesh update interval** | Skips N frames between mesh writes (0 = every frame). |
+| **Set mesh update interval (time)** | Sets a time-based mesh write interval in seconds; 0 reverts to frame-based. |
+| **Set mesh stagger mode** | Switches between Stable (freeze) and Hybrid (live LOS, staggered mesh). |
+| **Set raycast skip rate** | Rebuilds the visibility polygon only once every N frames. |
+| **Set max obstacle candidates** | Caps the number of obstacles tested per rebuild (0 = unlimited). |
 
 ---
 
-## 10. Conditions Reference
+## 11. Conditions Reference
 
 | Condition | Description |
 |---|---|
-| **Is object in LoS** | Check if a specific object is currently in the visibility polygon. |
-| **Is point in visibility** | Check if a given world coordinate (X, Y) is inside the polygon. |
-| **Is mesh deform enabled** | Check if mesh writing is active. |
-| **Is obstacle mode active** | Compare the current obstacle mode. |
-| **Has obstacle tag** | Check if a tag is in the active obstacle tag set. |
-| **Has obstacle object** | In `Custom objects` mode, check if an object type is in the list. |
-| **Is enabled** | True when the behavior is currently active (not disabled). |
-
-### Trigger Conditions
-
-| Trigger | Description |
-|---|---|
-| **On polygon updated** | Fired after each raycast. Use to react to visibility changes. |
-| **On ray hit** | Fired when a primary ray hits an obstacle. Optional tag filter. |
-| **On object enter line of sight** | Fired when a detection-tagged object enters the polygon. |
-| **On object exit line of sight** | Fired when a detection-tagged object leaves the polygon. |
-| **On obstacle mode changed** | Fired when the obstacle mode is switched. |
-| **On obstacle tag changed** | Fired when the obstacle tag is updated. |
-| **On mesh not ready** | Fired when the mesh cannot be initialized. |
-| **On raycast budget exceeded** | Fired after any rebuild in which the raycast took longer than the given threshold (ms). Use with `LastRaycastMs` to reduce quality adaptively. |
+| **Is enabled** | True when the behavior is currently active. Invertible. |
+| **Is mesh deform enabled** | True when the mesh is being written each update. |
+| **Is obstacle mode active** | True when the given mode (Solid/Custom/Tag) is the active mode. |
+| **Has obstacle tag** | True when the given tag is in the active obstacle tag set. |
+| **Has obstacle object** | True when the given object type is registered as a custom obstacle. |
+| **Is point in visibility** | True when the given world-space X, Y falls inside the visibility polygon. |
 
 ---
 
-## 11. Expressions Reference
+## 12. Expressions Reference
+
+### State
 
 | Expression | Returns | Description |
 |---|---|---|
-| **CountPolyPoints** | Integer | Number of vertices in the current visibility polygon. |
-| **GetPolyPointX(index)** | Float | World X coordinate of polygon vertex at index. |
-| **GetPolyPointY(index)** | Float | World Y coordinate of polygon vertex at index. |
-| **GetPolyPointAngle(index)** | Float | Angle (in degrees) from origin to polygon vertex at index. |
-| **GetPolyPointDist(index)** | Float | Distance (in pixels) from origin to polygon vertex at index. |
-| **GetPolyHitUID(index)** | Integer | UID of the obstacle that polygon vertex at index hit, or -1 if at radius limit. |
-| **PolygonArea** | Float | Calculated area of the visibility polygon in square pixels. |
-| **LastPolygonUpdateTime** | Float | Timestamp (in seconds) when the polygon was last recalculated. |
-| **CountVisibleObjects** | Integer | Number of detection-tagged objects currently in LoS. |
-| **GetVisibleObjectUID(index)** | Integer | UID of the visible object at index (0 = first, etc.). |
-| **LoSEntrantUID** | Integer | UID of the object that just entered LoS (valid in On object enter LoS event). |
-| **LoSExitantUID** | Integer | UID of the object that just exited LoS (valid in On object exit LoS event). |
-| **RayHitUID** | Integer | UID of the obstacle hit by the last ray (valid in On ray hit event). |
-| **RayHitX** | Float | World X of the last ray hit point (valid in On ray hit event). |
-| **RayHitY** | Float | World Y of the last ray hit point (valid in On ray hit event). |
-| **RayHitAngle** | Float | Angle (in degrees) of the ray that hit (valid in On ray hit event). |
-| **RayHitNormalX** | Float | X component of the surface normal at the hit point (-1 to 1). Valid inside On ray hit. |
-| **RayHitNormalY** | Float | Y component of the surface normal at the hit point (-1 to 1). Valid inside On ray hit. |
-| **RayHitNormalAngle** | Float | Angle (in degrees) of the surface normal at the hit point (0-360). Valid inside On ray hit. |
-| **RayHitReflectX** | Float | World X of the reflected ray endpoint from the hit point. Valid inside On ray hit. |
-| **RayHitReflectY** | Float | World Y of the reflected ray endpoint from the hit point. Valid inside On ray hit. |
-| **RayHitReflectAngle** | Float | Angle (in degrees) of the reflected ray direction (0-360). Valid inside On ray hit. |
-| **ActiveObstacleMode** | Text | Current obstacle mode: `"solid_behaviour"`, `"custom_objects"`, or `"tag"`. |
-| **ActiveObstacleTag** | Text | Current obstacle tag (in Tag mode). |
-| **CountObstacleObjects** | Integer | Number of object types in the custom objects list (0 if not in Custom objects mode). |
-| **ActiveLightRadius** | Float | Current light radius in pixels. |
-| **ActiveRayArc** | Float | Current ray arc in degrees. |
-| **ActiveFacingAngle** | Float | Current facing angle offset in degrees. |
-| **IsMeshDeformEnabled** | Boolean | Is mesh writing currently enabled (1 = yes, 0 = no). |
-| **IsObstacleModeActive(mode)** | Boolean | Check if a specific obstacle mode is active (1 = yes, 0 = no). |
-| **HasObstacleTag(tag)** | Boolean | Check if a tag is in the obstacle tag set (1 = yes, 0 = no). |
-| **HasObstacleObject(objectType)** | Boolean | Check if an object type is in the custom objects list (1 = yes, 0 = no). |
-| **LastRaycastMs** | Float | Time in milliseconds spent on the most recent visibility polygon rebuild. |
-| **ObstacleCandidateCount** | Integer | Number of obstacle instances tested in the most recent rebuild. |
-| **ActiveMeshUpdateInterval** | Integer | Current frame-based mesh write interval (1–8). |
-| **ActiveMeshUpdateIntervalTime** | Float | Current time-based mesh write interval in seconds. 0 means frame mode is active. |
-| **ActiveMeshStaggerMode** | String | Current stagger mode: `"stable"` or `"hybrid"`. |
-| **ActiveRaycastSkipRate** | Integer | Current raycast skip rate. 0 or 1 = every frame; 2+ = skipping active. |
+| `ARange` | number | Current maximum range in pixels. |
+| `ActiveConeOfView` | number | Current cone angle in degrees. |
+| `ActiveFacingAngle` | number | Current facing angle offset in degrees. |
+| `ActiveObstacleMode` | string | Active mode key: `"solid_behaviour"`, `"custom_objects"`, or `"tag"`. |
+| `ActiveObstacleTag` | string | Current primary obstacle tag, or empty string outside tag mode. |
+| `CountObstacleObjects` | number | Number of registered custom obstacle types. |
 
----
+### Visibility
 
-## 12. Triggers Reference
-
-| Trigger | Fires When | Context Data |
+| Expression | Returns | Description |
 |---|---|---|
-| **On polygon updated** | After rays are cast and polygon is rebuilt. | Polygon has new vertices; use `CountPolyPoints`, `GetPolyPointX/Y`, etc. |
-| **On ray hit** | A primary ray hits an obstacle (per ray per tick). | Use `RayHitUID`, `RayHitX/Y/Angle`, `RayHitNormalX/Y/Angle`, `RayHitReflectX/Y/Angle` to inspect the hit. Pass tag filter to detect specific hits. |
-| **On object enter line of sight** | A detection-tagged object's center enters the polygon. | Use `LoSEntrantUID` to identify the object. |
-| **On object exit line of sight** | A detection-tagged object's center exits the polygon. | Use `LoSExitantUID` to identify the object. |
-| **On obstacle mode changed** | Obstacle mode is switched via action. | Use `ActiveObstacleMode` to see the new mode. |
-| **On obstacle tag changed** | Obstacle tag is updated via action. | Use `ActiveObstacleTag` to see the new tag. |
-| **On mesh not ready** | Mesh deformer cannot be initialized. | Mesh writing is disabled; check object type compatibility. |
-| **On raycast budget exceeded** | The last rebuild took longer than the given threshold (ms). | Read `LastRaycastMs` for the exact duration. Reduce `SetRayDensity` or raise `SetRaycastSkipRate` to recover frame budget. |
+| `CountPolyPoints` | number | Number of vertices in the current visibility polygon. |
+| `GetPolyPointX(i)` | number | World X of polygon vertex at index i. |
+| `GetPolyPointY(i)` | number | World Y of polygon vertex at index i. |
+| `GetPolyPointAngle(i)` | number | Angle in degrees from the origin to vertex i. |
+| `GetPolyPointDist(i)` | number | Distance in pixels from the origin to vertex i. |
+| `GetPolyHitUID(i)` | number | UID of the obstacle hit at vertex i, or -1 for open space. |
+| `PolygonArea` | number | Approximate area of the visibility polygon in square pixels. |
+| `LastPolygonUpdateTime` | number | Runtime timestamp (seconds) of the last polygon rebuild. |
+
+### Performance
+
+| Expression | Returns | Description |
+|---|---|---|
+| `LastRaycastMs` | number | Time in milliseconds for the most recent vision rebuild. |
+| `ObstacleCandidateCount` | number | Number of obstacle instances tested in the last rebuild. |
+| `ActiveMeshUpdateInterval` | number | Current frame skip count between mesh writes. |
+| `ActiveMeshUpdateIntervalTime` | number | Current time-based mesh write interval in seconds (0 = frame-based). |
+| `ActiveMeshStaggerMode` | string | Current stagger mode key: `"stable"` or `"hybrid"`. |
+| `ActiveRaycastSkipRate` | number | Frames between vision rebuilds (0 or 1 = no skip). |
 
 ---
 
-## 13. System Use Cases
+## 13. Triggers Reference
 
-### Obstacle Collection System
-
-Collects candidate objects that might block rays before raycasting begins. You can switch between three strategies on the fly.
-
-#### Use Case 1: Solid-Only Obstacles
-
-```
-Event: On start of layout
-  Action: Guard: Set obstacle mode -> "Solid behaviour"
-  // Every object with Solid behavior blocks rays
-```
-
-**Tip:** Fastest obstacle collection, but includes all Solid instances. Use if everything that blocks light has Solid behavior.
-
-#### Use Case 2: Custom Object Types
-
-```
-Event: On start of layout
-  Action: Guard: Set obstacle mode -> "Custom objects"
-  Action: Guard: Add obstacle object -> Wall
-  Action: Guard: Add obstacle object -> Tree
-  
-Event: A dynamic cover is destroyed
-  Action: Guard: Remove obstacle object -> DynamicCover
-```
-
-**Tip:** Most flexible - precise control over which object types cast shadows. Efficient for large scenes where most objects don't cast shadows.
-
-#### Use Case 3: Tag-Based Obstacles
-
-```
-Event: On start of layout
-  Action: Guard: Set obstacle mode -> "Tag"
-  Action: Guard: Set obstacle tag -> "shadow_caster"
-  // Now instances tagged "shadow_caster" block rays
-  
-Event: A door opens
-  Action: Door: Remove tag "shadow_caster"
-  // Light immediately passes through
-```
-
-**Tip:** Most dynamic. Useful for doors, destructible obstacles, and state-driven visibility changes.
-
-### Ray Casting System
-
-Casts rays in a pattern around the host, collecting hit points to build the visibility polygon.
-
-#### Use Case 1: Full-Circle Light
-
-```
-Event: On start of layout
-  Action: Searchlight: Set ray arc -> 360
-  Action: Searchlight: Set ray density -> 80%
-  // 64 rays in all directions = smooth full-circle light
-```
-
-**Tip:** `360°` arc gives omnidirectional vision. Increase ray density for smoother curves around obstacles.
-
-#### Use Case 2: Narrow Vision Cone
-
-```
-Event: On start of layout
-  Action: Enemy: Set ray arc -> 60
-  Action: Enemy: Set ray density -> 20%
-  Action: Enemy: Set facing angle -> 0
-  // Enemy has a narrow 60° vision cone with 24 rays
-  // Set facing angle to rotate the cone if the sprite doesn't face forward
-```
-
-**Tip:** Narrower arcs = fewer rays needed for smooth results. Use for guards, turrets, and tunnel vision.
-
-#### Use Case 3: Dynamic Ray Adjustment
-
-```
-Event: Player equipped Night Vision goggles
-  Action: Player: Set light radius -> 500
-  Action: Player: Set ray density -> 60%
-  // Light expands and becomes more detailed
-  
-Event: Player lit a torch (fire is dim)
-  Action: Torch: Set light radius -> 150
-  Action: Torch: Set ray density -> 25%
-```
-
-**Tip:** Tweak ray count and radius at runtime to create power-ups, darkness effects, or different light intensities.
-
-### Detection System
-
-Tracks which objects are inside the visibility polygon and fires enter/exit events.
-
-#### Use Case 1: Enemy Detection on Patrol
-
-```
-Event: On start of layout
-  Action: Guard: Set detection tag -> "player"
-  
-Event: Simple Vision Cast: On object enter line of sight
-  Action: Guard.alert_sound: Play "alert"
-  Action: Guard: Move towards LoSEntrantUID object
-  
-Event: Simple Vision Cast: On object exit line of sight
-  Action: Guard: Move to last known Player position
-```
-
-**Tip:** Detection fires independently of ray hits. Even if a ray doesn't directly hit the player, if the player's center is inside the polygon, detection triggers.
-
-#### Use Case 2: Conditional Detection Interval
-
-```
-Event: On start of layout
-  Action: Enemy: Set detection interval -> 0.5
-  // Detection only runs every 0.5 seconds (not every frame)
-  
-Event: Player uses Stealth
-  Action: Enemy: Set detection interval -> 2
-  // Slower detection makes stealth easier
-```
-
-**Tip:** Increase detection interval to skip detection sweeps and improve performance in crowded scenes.
-
-#### Use Case 3: Point-in-Polygon Queries
-
-```
-Event: Some trigger
-  Condition: Guard: Is point in visibility -> 400, 300
-  Action: [Yes, the point (400, 300) is in the polygon]
-```
-
-**Tip:** Test arbitrary world coordinates against the polygon without needing to tag objects. Useful for traps, alarms, or spatial logic.
-
-### Mesh Deformation System
-
-Writes the polygon boundary to the host object's mesh surface, warping the sprite to visualize the light cone.
-
-#### Use Case 1: Dynamic Light Visualization
-
-```
-// Layout: Sprite with radial gradient, additive blend
-
-Event: On start of layout
-  Action: Light: Enable mesh deform
-  
-Event: Polygon updated (Simple Vision Cast: On polygon updated)
-  // Mesh is rewritten automatically; visual light cone updates in real-time
-```
-
-**Tip:** The mesh deformer is updated every frame if the polygon changes. Enable additive or screen blend mode for light effects.
-
-#### Use Case 2: Vision Cone with Pinch Point
-
-```
-Event: On start of layout
-  Action: Guard: Set mesh pin origin -> 0.5, 0.2
-  // Mesh fans out from the top-center of the sprite (not the dead center)
-  
-Event: Guard rotates
-  // Mesh automatically rotates with the host; pinch point stays relative
-```
-
-**Tip:** The pin origin is in normalized sprite coordinates (0.0–1.0). Experiment with different values to create asymmetric light shapes.
+| Trigger | Description |
+|---|---|
+| **On polygon updated** | Fires after every successful visibility polygon rebuild. |
+| **On mesh not ready** | Fires when mesh deformation is enabled but the host has no writable mesh. |
+| **On obstacle mode changed** | Fires after the active obstacle mode changes. |
+| **On obstacle tag changed** | Fires after the primary obstacle tag changes in tag mode. |
+| **On raycast budget exceeded** | Fires after any rebuild where the raycast duration exceeded the given threshold in ms. |
 
 ---
 
-### Performance System
+## 14. System Use Cases
 
-Controls the rate at which the visibility polygon is rebuilt and the rate at which the result is written to the GPU mesh.
+### Setup system
 
-#### Use Case 1: Many Background Torches
+The Setup system controls how rays are parameterised and which objects they collide with.
 
-**Scenario:** A dungeon level with 30 wall torches. All torches are stationary, so a full polygon rebuild every frame is wasteful.
+**Use case 1 — Minimal static light**
 
-```
-Event: On start of layout
-  Action: Torch: Set mesh stagger mode -> "Stable"
-  Action: Torch: Set mesh update interval -> 4
-  Action: Torch: Set raycast skip rate -> 2
-  // Each torch rebuilds its polygon every other frame (~30 fps rebuild at 60 fps)
-  // Mesh writes are spread across a 4-frame window; the phase offset derived
-  // from each instance's UID distributes them automatically
-```
-
-**Tip:** Stable stagger + interval 4 means in any given frame at most 1/4 of the torches write their mesh. No manual coordination needed — UID phasing handles it.
-
-#### Use Case 2: Adaptive Quality Under Load
-
-**Scenario:** A mobile game that must stay within a per-frame raycast budget.
+Scenario: A candle sprite that illuminates a radius around itself; walls are all tagged "wall".
 
 ```
-Event: On start of layout
-  Action: Light: Set ray density -> 50
-
-Event: Simple Vision Cast: On raycast took longer than 4 ms
-  Condition: Light.ActiveRayArc > 15  // don't go below 15% density
-  Action: Light: Set ray density -> Light.ActiveRayArc - 5
-  // Step down 5% whenever a rebuild exceeds budget
-
-Event: Simple Vision Cast: On polygon updated
-  Condition: Light.LastRaycastMs < 2
-  Condition: Light.ActiveRayArc < 50
-  Action: Light: Set ray density -> Light.ActiveRayArc + 1
-  // Slowly recover quality when things are comfortable
+Event: System > On start of layout
+  Action: Candle.SimpleVisionCast > Set obstacle mode to Tag
+  Action: Candle.SimpleVisionCast > Set obstacle tag to "wall"
+  // Range, cone, and density set in Properties panel; nothing more needed
 ```
 
-**Tip:** Step down in large increments (5–10%), recover in small ones (1–2%). This prevents oscillation around the threshold.
+No per-tick actions are required — the behavior updates automatically.
 
-#### Use Case 3: Off-Screen Light Throttling
+**Use case 2 — Switching obstacle sets mid-game**
 
-**Scenario:** Lights far from the player should barely run; lights near the player run at full quality.
-
-```
-Event: Every 0.5 seconds
-  For each Light
-    Condition: distance(Light.X, Light.Y, Player.X, Player.Y) > 800
-    Action: Light: Set raycast skip rate -> 6
-    Action: Light: Set mesh update interval -> 8
-
-Event: Every 0.5 seconds
-  For each Light
-    Condition: distance(Light.X, Light.Y, Player.X, Player.Y) <= 800
-    Action: Light: Set raycast skip rate -> 1
-    Action: Light: Set mesh update interval -> 1
-```
-
-**Tip:** Run the distance check every half-second rather than every tick — checking distances every tick for every light is itself a performance cost.
-
-#### Use Case 4: Time-Based Interval for Cross-Platform Consistency
-
-**Scenario:** The game runs on PC at 144 fps and on mobile at 30 fps. A frame-based interval of 4 means very different real-world refresh rates on each platform.
+Scenario: A player uses a "Phase Torch" that ignores wooden walls and only sees stone walls.
 
 ```
-Event: On start of layout
-  Action: AmbientLight: Set mesh update interval (time) -> 0.05
-  // Mesh rewrites ~20 times per second on all platforms
-  // At 144 fps this skips ~7 frames between writes
-  // At 30 fps this writes almost every frame — correct automatically
+Event: Player equips "Phase Torch"
+  Action: Player.SimpleVisionCast > Set obstacle mode to Tag
+  Action: Player.SimpleVisionCast > Set obstacle tag to "stone_wall"
+
+Event: Player unequips "Phase Torch"
+  Action: Player.SimpleVisionCast > Set obstacle tag to "wall,stone_wall"
+```
+
+**Use case 3 — Runtime cone adjustment**
+
+Scenario: A guard's vision narrows when suspicious and widens when relaxed.
+
+```
+Event: Guard enters Suspicious state
+  Action: Guard.SimpleVisionCast > Set cone of view to 50
+  Action: Guard.SimpleVisionCast > Set range to 400
+
+Event: Guard enters Relaxed state
+  Action: Guard.SimpleVisionCast > Set cone of view to 90
+  Action: Guard.SimpleVisionCast > Set range to 300
 ```
 
 ---
 
-## 14. Game Use Cases
+### Visibility polygon system
 
-### Use Case 1: Guard AI with Cone-of-View
+The Visibility system is where gameplay logic reads the computed polygon.
 
-**Scenario:** A 2D top-down action game. Guards patrol the level and detect the player if they enter the guard's 90° vision cone.
+**Use case 4 — Item reveal on view entry**
 
-**Layer structure:**
+Scenario: Clue objects in a detective game only become visible when the player looks at them.
+
 ```
-Layout: Main
-├── Layer: Walls (for obstacles)
-├── Layer: Objects (enemies, props)
-└── Layer: UI
-```
-
-**Event sheet:**
-```
-Event: On start of layout
-  Action: Guard: Set obstacle mode -> "Solid behaviour"
-  Action: Guard: Set ray arc -> 90
-  Action: Guard: Set ray count -> 32
-  Action: Guard: Set light radius -> 250
-  Action: Guard: Set detection tag -> "player"
-  Action: Guard: Disable mesh deform
-  // Guard has a narrow vision cone; no mesh visualization needed
-
-Event: Simple Vision Cast: On object enter line of sight
-  Action: Guard.state: Set to "alert"
-  Action: Guard: Move towards LoSEntrantUID object
-
-Event: Simple Vision Cast: On object exit line of sight
-  Action: Guard.state: Set to "searching"
-  Action: Guard.path: Move to last known Player position
+Event: Clue.SimpleVisionCast > On polygon updated
+  Condition: Clue.IsVisible = false
+  Condition: Detective.SimpleVisionCast > Point Clue.X, Clue.Y is in visibility
+    Action: Clue > Set visible to true
+    Action: Clue > Start "reveal" animation
 ```
 
-**Tip:** Use `ray arc = 90°` and `ray density = 25%` for a realistic guard vision cone. Disable mesh deform to save performance.
+**Use case 5 — Proximity threat within cone**
 
----
+Scenario: Damage the player if they walk into an active laser's cone.
 
-### Use Case 2: Fog of War with Team Lights
-
-**Scenario:** An RTS-like game. Each player's units emit lights; visible areas are revealed; obstacles (trees, buildings) cast shadows that block line-of-sight.
-
-**Layer structure:**
 ```
-Layout: Main
-├── Layer: Terrain
-├── Layer: Obstacles (trees, buildings)
-├── Layer: Units (allied and enemy)
-└── Layer: FogOfWar (visual darkness overlay)
+Event: System > Every tick
+  Condition: Laser.SimpleVisionCast > Is enabled
+  Condition: Laser.SimpleVisionCast > Point Player.X, Player.Y is in visibility
+    Action: Player > Subtract 1 from Health
 ```
 
-**Event sheet:**
-```
-Event: On start of layout
-  For each unit type (Soldier, Tank, etc.)
-    Action: Unit: Set obstacle mode -> "Tag"
-    Action: Unit: Set obstacle tag -> "trees"
-    Action: Unit: Set light radius -> 300
-    Action: Unit: Set ray density -> 35%
-    Action: Unit: Set ray arc -> 360
-    Action: Unit: Enable mesh deform
-    // Each unit is a circular light with 128 rays
+**Use case 6 — Polygon area as a game mechanic**
 
-Event: Simple Vision Cast: On polygon updated
-  Action: FogOfWar: Update texture based on visible polygon
-  // Custom rendering updates the fog overlay in real-time
+Scenario: A puzzle scores players based on how much of the room their light fills.
+
+```
+Event: Timer fires "round_end"
+  Action: ScoreText > Set text to "Coverage: " & round(Light.SimpleVisionCast.PolygonArea / RoomArea * 100) & "%"
 ```
 
 ---
 
-### Use Case 3: Searchlight Sweeping
+### Mesh system
 
-**Scenario:** A spotlight object rotates and sweeps across a dark room. The light cone is visualized with a glowing mesh; anything in the cone is detected.
+The Mesh system controls the visual rendering of the polygon.
 
-**Layer structure:**
+**Use case 7 — Layer-masked shadow rendering**
+
+Scenario: Use a dark overlay layer with a destination-out blending sprite to punch a hole where the light falls.
+
 ```
-Layout: Main
-├── Layer: Room (walls, obstacles)
-├── Layer: Light (searchlight sprite)
-└── Layer: Objects (crates, enemies)
-```
-
-**Event sheet:**
-```
-Event: On start of layout
-  Action: Searchlight: Set ray arc -> 120
-  Action: Searchlight: Set ray density -> 20%
-  Action: Searchlight: Set light radius -> 400
-  Action: Searchlight: Set detection tag -> "entity"
-  Action: Searchlight: Enable mesh deform
-  Action: Searchlight: Set color -> RGB(255, 255, 100)
-  // Yellowish searchlight with mesh deformer
-
-Event: Every tick
-  Action: Searchlight: Rotate -> 2 degrees
-  // Beam sweeps across the room
-
-Event: Simple Vision Cast: On object enter line of sight
-  Action: [Detected entity] Object color flash white
-  Action: Logger: Log "Detected: " & LoSEntrantUID
+Event: System > On start of layout
+  Action: ShadowMask.SimpleVisionCast > Enable mesh deform
+  Action: ShadowMask.SimpleVisionCast > Set mesh pin origin to 0.5, 0.5
+  // ShadowMask sprite: white fill, destination-out blending on the shadow layer
 ```
 
-**Tip:** Set the sprite blend mode to "Additive" or "Screen" and the light color to a bright yellow or white. The mesh deformer warps the sprite to match the light cone, creating a realistic beam effect.
+The mesh deforms to the polygon shape automatically; no further events are needed.
+
+**Use case 8 — Freeze mesh for cinematic cutscene**
+
+Scenario: During a cutscene, freeze the lighting polygon so performance is not wasted.
+
+```
+Event: Cutscene starts
+  Action: AllLights.SimpleVisionCast > Disable mesh deform
+  Action: AllLights.SimpleVisionCast > Set enabled to false
+
+Event: Cutscene ends
+  Action: AllLights.SimpleVisionCast > Set enabled to true
+  Action: AllLights.SimpleVisionCast > Enable mesh deform
+```
 
 ---
 
-### Use Case 4: NPC Awareness System
+### Performance system
 
-**Scenario:** NPCs have different awareness levels. Quiet movement is harder to detect; loud actions are instantly spotted.
+The Performance system keeps frame budgets under control in complex scenes.
 
-**Layer structure:**
+**Use case 9 — Adaptive quality**
+
+Scenario: Automatically lower quality when frame rate drops below 50.
+
 ```
-Layout: Main
-├── Layer: World (obstacles)
-├── Layer: NPCs
-└── Layer: Player
-```
-
-**Event sheet:**
-```
-Event: On start of layout
-  For each NPC
-    Action: NPC: Set obstacle mode -> "Custom objects"
-    Action: NPC: Add obstacle object -> Wall
-    Action: NPC: Add obstacle object -> Boulder
-    Action: NPC: Set detection tag -> "player"
-    Action: NPC: Set detection interval -> 0.2
-    // NPCs check for player every 0.2 seconds (not every frame)
-
-Event: Player walks normally
-  Action: Player.noise_level: Set to 1
-  Action: NPC.detection_radius_multiplier: Set to 1
-  // Normal detection
-  
-Event: Player crouches and walks
-  Action: Player.noise_level: Set to 0.3
-  Action: NPC.detection_radius_multiplier: Set to 0.3
-  Action: NPC: Set light radius -> NPC.base_radius * NPC.detection_radius_multiplier
-
-Event: Simple Vision Cast: On object enter line of sight
-  Condition: LoSEntrantUID == Player
-  Action: NPC.awareness: Set to "alert"
+Event: System > Every 1 second
+  Condition: System.FPS < 50
+    Action: AllLights.SimpleVisionCast > Set raycast skip rate to 3
+    Action: AllLights.SimpleVisionCast > Set ray density to 25
+  Condition: System.FPS >= 58
+    Action: AllLights.SimpleVisionCast > Set raycast skip rate to 1
+    Action: AllLights.SimpleVisionCast > Set ray density to 75
 ```
 
-**Tip:** Adjust the light radius dynamically based on player behavior (sneaking vs. running). Combine with particle effects to visualize "noise" propagation.
+**Use case 10 — Background torch bank**
+
+Scenario: 30 decorative torches in a dungeon hall need minimal CPU use.
+
+```
+Event: System > On start of layout (for each BgTorch)
+  Action: BgTorch.SimpleVisionCast > Set mesh update interval to 4
+  Action: BgTorch.SimpleVisionCast > Set mesh stagger mode to Hybrid
+  Action: BgTorch.SimpleVisionCast > Set raycast skip rate to 5
+  Action: BgTorch.SimpleVisionCast > Set max obstacle candidates to 10
+  // Rebuilds vision every 5 frames; writes mesh every 4; checks only 10 nearest walls
+```
 
 ---
 
-### Use Case 5: Turret Tracking
+### Save/Load system
 
-**Scenario:** Automated turrets scan for targets in a 360° arc and fire at detected enemies.
+SVC persists its entire configuration state to Construct's savegame JSON automatically. All properties, obstacle tags, and custom object names are saved and restored.
 
-**Layer structure:**
+**Use case 11 — Mid-dungeon save**
+
+Scenario: Player saves in a dungeon; their torch range and cone upgrades must persist.
+
 ```
-Layout: Main
-├── Layer: Walls
-├── Layer: Turrets
-└── Layer: Enemies
+Event: Player presses Save button
+  Action: System > Save to slot 1
+  // SVC automatically writes range, cone, density, obstacle mode, tags to the slot
+
+Event: System > On slot 1 loaded
+  // SVC automatically restores all its state; no extra actions needed
 ```
-
-**Event sheet:**
-```
-Event: On start of layout
-  Action: Turret: Set obstacle mode -> "Solid behaviour"
-  Action: Turret: Set ray arc -> 360
-  Action: Turret: Set ray density -> 20%
-  Action: Turret: Set light radius -> 500
-  Action: Turret: Set detection tag -> "enemy"
-  Action: Turret: Disable mesh deform
-
-Event: Simple Vision Cast: On object enter line of sight
-  Action: Turret: Look towards LoSEntrantUID object
-  Action: Turret: Fire at LoSEntrantUID object
-
-Event: Simple Vision Cast: On object exit line of sight
-  Action: Turret: Stop firing
-  Action: Turret: Return to idle scan
-```
-
-**Tip:** Turrets benefit from high ray density (75%+) for smooth omnidirectional detection. Use `detection interval = 0` for real-time targeting.
 
 ---
 
-### Use Case 6: Trap Activation Zone
+## 15. Game Use Cases
 
-**Scenario:** Traps activate when a player enters the trap's line-of-sight detection zone. Obstacles (doors, walls) can block the trigger.
+### 1. Basic player torch in a top-down dungeon
 
-**Layer structure:**
+**Scenario:** A top-down dungeon game where the player carries a torch that illuminates only what is directly visible.
+
 ```
-Layout: Main
-├── Layer: Obstacles
-├── Layer: Traps
-└── Layer: Player
-```
+Event: System > On start of layout
+  Action: Torch.SimpleVisionCast > Set obstacle mode to Tag
+  Action: Torch.SimpleVisionCast > Set obstacle tag to "wall"
 
-**Event sheet:**
-```
-Event: On start of layout
-  Action: Trap: Set obstacle mode -> "Tag"
-  Action: Trap: Set obstacle tag -> "wall"
-  Action: Trap: Set ray arc -> 180
-  Action: Trap: Set ray density -> 10%
-  Action: Trap: Set light radius -> 150
-  Action: Trap: Set detection tag -> "player"
-
-Event: Simple Vision Cast: On object enter line of sight
-  Action: Trap.sprite: Play "activate" animation
-  Action: Trap.emitter: Emit particles
-  Action: Player: Damage -> 25
-  // Trap activates when player is detected
+Event: System > Every tick
+  Action: Torch.X > Set X to Player.X
+  Action: Torch.Y > Set Y to Player.Y
+  Action: Torch.SimpleVisionCast > Set facing angle offset to Player.Angle
 ```
 
-**Tip:** Use a low ray density (10-15%) and smaller radius for trigger zones. Disable mesh deform to save performance.
+The Torch sprite has additive blending. The dark overlay layer uses destination-out blending so everything outside the cone stays black.
 
 ---
 
-### Use Case 7: Shadow Casting and Lighting
+### 2. Guard patrol detection cone
 
-**Scenario:** Multiple light sources in a scene cast realistic shadows. Combine mesh deformation with particle effects to render dynamic lighting.
+**Scenario:** A patrolling guard has a narrow forward cone. Entering it triggers an alert.
 
-**Layer structure:**
 ```
-Layout: Main
-├── Layer: Room (dark)
-├── Layer: Lights (glowing sprites)
-├── Layer: Shadows (visual overlay)
-└── Layer: Objects
-```
+Event: System > On start of layout
+  Action: Guard.SimpleVisionCast > Set cone of view to 90
+  Action: Guard.SimpleVisionCast > Set range to 350
+  Action: Guard.SimpleVisionCast > Set obstacle tag to "wall"
 
-**Event sheet:**
-```
-Event: On start of layout
-  For each light (TorchLight, CandleLight, ElectricLight)
-    Action: Light: Set obstacle mode -> "Solid behaviour"
-    Action: Light: Set ray arc -> 360
-    Action: Light: Set ray density -> 60%
-    // Different lights use different radii based on intensity
-    Light radius 200 for torches, 400 for electric lights
-    Action: Light: Enable mesh deform
-    Action: Light: Set color -> RGB(255, 180, 0) for torches
-    
-Event: Simple Vision Cast: On polygon updated
-  Action: [Update shadow map or particle emitter based on polygon]
-  // Dynamic lighting updates each frame
-```
+Event: System > Every tick
+  Action: Guard.SimpleVisionCast > Set facing angle offset to Guard.Angle
 
-**Tip:** High ray density (75%+) and additive blend mode create smooth, realistic light. Combine with a shadow layer sprite set to "Darken" blend mode for contrast.
+Event: Guard.SimpleVisionCast > On polygon updated
+  Condition: Guard.SimpleVisionCast > Point Player.X, Player.Y is in visibility
+    Action: Guard > Set state to "Alert"
+    Action: AlarmSound > Play
+```
 
 ---
 
-### Use Case 8: Dynamic Door Opening/Closing
+### 3. Fog of war for a top-down RTS
 
-**Scenario:** A door blocks light and obstacles. When opened, light passes through; when closed, it blocks again.
+**Scenario:** Each unit has its own vision cone; the explored area is stored on a fog-of-war layer.
 
-**Layer structure:**
 ```
-Layout: Main
-├── Layer: Room
-├── Layer: Doors
-└── Layer: Light sources
-```
-
-**Event sheet:**
-```
-Event: On start of layout
-  Action: Light: Set obstacle mode -> "Tag"
-  Action: Light: Set obstacle tag -> "solid"
-  Action: Door: Add tag "solid"
-  // Door initially blocks light
-
-Event: Player presses action near Door
-  Action: Door: Play "open" animation
-  Action: Door: Remove tag "solid"
-  // Light immediately passes through
-  // Simple Vision Cast detects the tag removal on next tick
-
-Event: Door: On animation end (close)
-  Action: Door: Add tag "solid"
-  // Door re-blocks light when fully closed
+Event: System > Every tick (for each Unit)
+  Sub-event: For i = 0 to Unit.SimpleVisionCast.CountPolyPoints - 1
+    Action: FogCanvas > Erase circle at
+      Unit.SimpleVisionCast.GetPolyPointX(i),
+      Unit.SimpleVisionCast.GetPolyPointY(i), radius 8
 ```
 
-**Tip:** Tag-based obstacle mode is most responsive to state changes. Add/remove tags to dynamically control light blocking.
+For performance, stagger each unit's raycast skip rate and use `On polygon updated` rather than `Every tick` to drive the canvas erase.
 
 ---
 
-### Use Case 9: Line-of-Sight Ability Targeting
+### 4. Stealth game — player hides from guards
 
-**Scenario:** A player casts a spell that must target an enemy in line-of-sight. The spell fails if an obstacle blocks the path.
+**Scenario:** The player must avoid all guard cones. Any guard that sees the player triggers a chase.
 
-**Layer structure:**
 ```
-Layout: Main
-├── Layer: Obstacles
-├── Layer: Player
-└── Layer: Enemies
-```
+Event: System > Every tick (for each Guard)
+  Condition: Guard.SimpleVisionCast > Point Player.X, Player.Y is in visibility
+  Condition: Guard.state = "Patrol"
+    Action: Guard > Set state to "Chase"
+    Action: Guard > Set target to Player
+    Action: Alert > Set visible to true
+    Action: AlertSound > Play
 
-**Event sheet:**
+Event: System > Every tick (for each Guard)
+  Condition: Guard.state = "Chase"
+  Condition: Guard.SimpleVisionCast > Point Player.X, Player.Y is in visibility = false
+    Action: Guard > Set state to "Search"
 ```
-Event: Player casts spell "Fireball"
-  Condition: Player: Is object in LoS -> Targeted.Enemy
-  Action: Enemy: Take damage -> 50
-  // Spell succeeds
-  
-Event: Player casts spell "Fireball"
-  Condition: NOT Player: Is object in LoS -> Targeted.Enemy
-  Action: HUD: Show message "Line of sight blocked"
-  // Spell blocked by obstacle
-```
-
-**Tip:** Use the condition `Is object in LoS` to check if a specific object is currently visible. Works even if the object is off-screen.
 
 ---
 
-### Use Case 10: Multi-Layer Detection System
+### 5. Tower defense — tower targeting by vision
 
-**Scenario:** A large fortress with multiple watchtowers. Each tower has independent vision; the fortress detects intruders when ANY tower sees them.
+**Scenario:** Towers only attack enemies that are inside their vision polygon.
 
-**Layer structure:**
 ```
-Layout: Main
-├── Layer: Walls
-├── Layer: Towers
-├── Layer: Intruders
-└── Layer: Alerts
-```
-
-**Event sheet:**
-```
-Event: On start of layout
-  For each Tower (Tower1, Tower2, Tower3)
-    Action: Tower: Set obstacle mode -> "Solid behaviour"
-    Action: Tower: Set ray arc -> 360
-    Action: Tower: Set ray density -> 50%
-    Action: Tower: Set light radius -> 600
-    Action: Tower: Set detection tag -> "intruder"
-
-Event: Any tower detects an intruder
-  (Trigger: Simple Vision Cast: On object enter line of sight for any tower)
-  Action: Fortress.alert_level: Add 1
-  Action: Fortress: Broadcast "Intruder detected"
-
-Event: All towers lose sight of intruders
-  (All-clear condition)
-  Action: Fortress.alert_level: Subtract 1
-  
-Event: Fortress.alert_level > 0
-  Action: Guards: Pursue intruders
+Event: System > Every tick (for each Tower)
+  Action: System > Set variable TowerHasTarget to false
+  Sub-event: For each Enemy
+    Condition: Tower.SimpleVisionCast > Point Enemy.X, Enemy.Y is in visibility
+    Condition: TowerHasTarget = false
+      Action: Tower > Fire projectile toward Enemy
+      Action: System > Set variable TowerHasTarget to true
 ```
 
-**Tip:** Use multiple Simple Vision Cast instances (one per watchtower) for overlapping detection coverage. The global detection condition is the OR of all tower detections.
+Towers have 360° cones by default; change to directional cones for aesthetic variety.
 
 ---
 
-### Use Case 11: Performance Optimization with Culling
+### 6. Puzzle — rotating searchlight
 
-**Scenario:** A large outdoor scene with many lights. Use aggressive culling to test only nearby obstacles.
+**Scenario:** A spotlight rotates around a fixed pivot. The player must cross a gap when the cone points away.
 
-**Layer structure:**
 ```
-Layout: Main
-├── Layer: Terrain (many obstacles)
-├── Layer: Lights (many light sources)
-└── Layer: Objects
-```
+Event: System > Every tick
+  Action: Spotlight > Rotate 45 degrees per second
+  // SVC facing angle reads Spotlight.Angle automatically
 
-**Event sheet:**
+Event: Spotlight.SimpleVisionCast > On polygon updated
+  Condition: Spotlight.SimpleVisionCast > Point Player.X, Player.Y is in visibility
+    Action: System > Restart layout
+    Action: DeathSound > Play
 ```
-Event: On start of layout
-  For each Light
-    Action: Light: Set obstacle mode -> "Solid behaviour"
-    Action: Light: Set cull mode -> "Radius AABB"
-    // Only test obstacles within the light's radius
-    Action: Light: Set detection interval -> 0.5
-    // Detection sweeps every 0.5 seconds, not every frame
-    
-Event: Simple Vision Cast: On polygon updated
-  // Polygon updates every frame for smooth visuals
-  // Detection only updates every 0.5 seconds for performance
-```
-
-**Tip:** Separate polygon updates (visual) from detection updates (gameplay). High visual frame rate (smooth light) with lower detection rate (fast detection checks).
 
 ---
 
-### Use Case 12: Mesh Deform Pinch Point Variations
+### 7. Horror game — monster's sensory zone
 
-**Scenario:** Different light shapes: a searchlight (pinch from top), an ambient light (pinch from center), a flood light (pinch from top with wide spread).
+**Scenario:** A blind monster "sees" by sound its detection radius expands when the player makes noise.
 
-**Event sheet:**
 ```
-Event: On start of layout
-  // Searchlight (pinch from top-center)
-  Action: Searchlight: Set mesh pin origin -> 0.5, 0.0
-  
-  // Ambient light (pinch from center)
-  Action: AmbientLight: Set mesh pin origin -> 0.5, 0.5
-  
-  // Flood light (pinch from center-back)
-  Action: FloodLight: Set mesh pin origin -> 0.5, 0.8
-```
+Event: Player footstep sound plays
+  Action: Monster.SimpleVisionCast > Set range to 500
+  Action: Monster.SimpleVisionCast > Set cone of view to 360
 
-**Tip:** The pin origin is in normalized sprite coordinates (0.0–1.0). Experiment with values to create different light shape aesthetics.
+Event: System > 2 seconds after "footstep"
+  Action: Monster.SimpleVisionCast > Set range to 150
+  Action: Monster.SimpleVisionCast > Set cone of view to 360
+
+Event: System > Every tick
+  Condition: Monster.SimpleVisionCast > Point Player.X, Player.Y is in visibility
+    Action: Monster > Set state to "Hunt"
+```
 
 ---
 
-### Use Case 13: Save/Load Detection State
+### 8. Dynamic light flicker effect
 
-**Scenario:** A stealth game with checkpoint saves. On load, restore which enemies are aware of the player.
+**Scenario:** A candle flickers by randomly adjusting range each frame.
 
-**Event sheet:**
 ```
-Event: On save game
-  For each Enemy
-    Action: SaveData: Set "enemy_" & Enemy.uid & "_aware" -> 
-      (Enemy.state == "alert") ? 1 : 0
-
-Event: On load game
-  For each Enemy
-    If SaveData.Get("enemy_" & Enemy.uid & "_aware") == 1
-      Action: Enemy.state: Set to "alert"
-      Action: Enemy: Move towards last known Player position
+Event: System > Every tick
+  Action: Candle.SimpleVisionCast > Set range to 200 + random(50) - 25
+  Action: Candle.SimpleVisionCast > Set ray density to 60
+  // The mesh deforms to the new polygon shape each tick, creating organic flicker
 ```
-
-**Tip:** Simple Vision Cast itself saves LoS state automatically in the behavior's save/load system. This use case is for game-level persistence (saving to a file).
 
 ---
 
-### Use Case 14: Dynamic Obstacle Addition/Removal
+### 9. Multiple light sources with additive blending
 
-**Scenario:** A destructible environment. When a wall is destroyed, it stops blocking light.
+**Scenario:** Ten torches illuminate a dungeon. All use additive blending sprites on a single lighting layer.
 
-**Layer structure:**
 ```
-Layout: Main
-├── Layer: Destructible walls
-├── Layer: Lights
-└── Layer: Objects
-```
-
-**Event sheet:**
-```
-Event: On start of layout
-  Action: Light: Set obstacle mode -> "Custom objects"
-  Action: Light: Add obstacle object -> DestructibleWall
-  
-Event: Player destroys DestructibleWall
-  Action: DestructibleWall: Destroy
-  // Wall is gone
-  
-  // Option 1: Dynamically remove the object type
-  Action: Light: Remove obstacle object -> DestructibleWall
-  
-  // Option 2: Use tag mode instead (easier for partial destruction)
-  // If only this specific wall is destroyed, just remove its tag:
-  Action: Wall_Instance: Remove tag "obstacle"
+Event: System > On start of layout (for each Torch)
+  Action: Torch.SimpleVisionCast > Set obstacle mode to Tag
+  Action: Torch.SimpleVisionCast > Set obstacle tag to "wall"
+  Action: Torch.SimpleVisionCast > Set mesh update interval to 2
+  Action: Torch.SimpleVisionCast > Set max obstacle candidates to 15
+  // Additive blending is set in the sprite editor, not via events
 ```
 
-**Tip:** Custom objects mode is best for this. If you destroy the last instance of an object type, consider removing it from the obstacle list to avoid searching an empty type.
+Because each torch uses additive blending, overlapping cones naturally brighten the center.
 
 ---
 
-### Use Case 15: Cooperative Multi-Light System
+### 10. Invisible detection zone for traps
 
-**Scenario:** Two characters (e.g., player and ally) shine lights that reveal the level together. Their vision cones are separate but feed into a shared fog-of-war system.
+**Scenario:** A pressure plate activates a spike trap when the player enters the spike zone, but only if the guard is watching.
 
-**Layer structure:**
 ```
-Layout: Main
-├── Layer: World
-├── Layer: Lights (player + ally)
-├── Layer: Fog of war overlay
-└── Layer: Objects
-```
-
-**Event sheet:**
-```
-Event: On start of layout
-  Action: PlayerLight: Set obstacle mode -> "Solid behaviour"
-  Action: AllyLight: Set obstacle mode -> "Solid behaviour"
-  // Both use same obstacle setup
-  
-  Action: PlayerLight: Set detection tag -> "enemy"
-  Action: AllyLight: Set detection tag -> "enemy"
-
-Event: PlayerLight: On polygon updated OR AllyLight: On polygon updated
-  Action: [Merge both polygons into shared FogOfWar texture]
-  
-Event: (PlayerLight OR AllyLight) On object enter line of sight
-  Action: [Enemy became visible to at least one light]
-  Action: HUD: Show enemy icon
+Event: Player steps on pressure plate
+  Condition: Guard.SimpleVisionCast > Point SpikeTrap.X, SpikeTrap.Y is in visibility
+    Action: SpikeTrap > Activate
+  Else condition:
+    Action: Player > Play "close call" animation
 ```
 
-**Tip:** Maintain a merged visibility polygon from multiple lights. Update the shared fog texture whenever ANY light's polygon changes.
+SVC on the Guard; `IsPointInVisibility` on the trap's location - no visible mesh needed.
+
+---
+
+### 11. Day/night cycle — sun as a radial light
+
+**Scenario:** A top-down scene fades from night to day by scaling the SVC range of a large ambient light.
+
+```
+Event: System > Every tick
+  Action: SunLight.SimpleVisionCast > Set range to 200 + DayCycle * 1800
+  // DayCycle is 0.0 (midnight) to 1.0 (noon)
+  // At noon, range = 2000 (covers the full layout); at midnight, range = 200 (tiny glow)
+```
+
+---
+
+### 12. Escort NPC — maintain line-of-sight to player
+
+**Scenario:** An escort NPC stops and waits if the player leaves its view.
+
+```
+Event: System > Every tick
+  Condition: Escort.SimpleVisionCast > Point Player.X, Player.Y is in visibility
+    Action: Escort > Move toward Player at 150 px/sec
+  Else:
+    Action: Escort > Play animation "Idle"
+    Action: HUD > Show "Escort is waiting..."
+```
+
+---
+
+### 13. Collectibles revealed by proximity
+
+**Scenario:** Hidden coins are only drawn when the player's torch reaches them.
+
+```
+Event: System > On start of layout (for each Coin)
+  Action: Coin > Set visible to false
+
+Event: System > Every 0.2 seconds
+  Sub-event: For each Coin
+    Condition: Player.SimpleVisionCast > Point Coin.X, Coin.Y is in visibility
+      Action: Coin > Set visible to true
+    Else:
+      Action: Coin > Set visible to false
+```
+
+---
+
+### 14. Exploding barrel chain reaction
+
+**Scenario:** An explosion emits a blast cone. Any barrel inside the cone also explodes.
+
+```
+Event: Barrel explodes
+  Action: BlastZone > Set position to Barrel.X, Barrel.Y
+  Action: BlastZone.SimpleVisionCast > Set cone of view to 360
+  Action: BlastZone.SimpleVisionCast > Set range to 200
+
+Event: BlastZone.SimpleVisionCast > On polygon updated
+  Sub-event: For each OtherBarrel
+    Condition: BlastZone.SimpleVisionCast > Point OtherBarrel.X, OtherBarrel.Y is in visibility
+      Action: OtherBarrel > Explode
+  Action: BlastZone > Destroy
+```
+
+---
+
+### 15. Sniper scope zoom — narrow cone at long range
+
+**Scenario:** When the player aims, the view snaps to a long-range narrow cone.
+
+```
+Event: Player right-clicks (aim)
+  Action: Player.SimpleVisionCast > Set cone of view to 15
+  Action: Player.SimpleVisionCast > Set range to 1200
+  Action: Player.SimpleVisionCast > Set ray density to 100
+
+Event: Player releases right-click
+  Action: Player.SimpleVisionCast > Set cone of view to 90
+  Action: Player.SimpleVisionCast > Set range to 350
+  Action: Player.SimpleVisionCast > Set ray density to 50
+```
+
+---
+
+### 16. Vision cone on a vehicle — headlights
+
+**Scenario:** A top-down car has twin headlight beams that follow the car's direction.
+
+```
+Event: System > On start of layout
+  Action: LeftHeadlight.SimpleVisionCast > Set cone of view to 50
+  Action: LeftHeadlight.SimpleVisionCast > Set range to 500
+  Action: RightHeadlight.SimpleVisionCast > Set cone of view to 50
+  Action: RightHeadlight.SimpleVisionCast > Set range to 500
+
+Event: System > Every tick
+  Action: LeftHeadlight > Set position to Car.ImagePointX("LeftLight"), Car.ImagePointY("LeftLight")
+  Action: LeftHeadlight.SimpleVisionCast > Set facing angle offset to Car.Angle
+  Action: RightHeadlight > Set position to Car.ImagePointX("RightLight"), Car.ImagePointY("RightLight")
+  Action: RightHeadlight.SimpleVisionCast > Set facing angle offset to Car.Angle
+```
+
+---
+
+### 17. Boss with sector-based attacks
+
+**Scenario:** A boss has three rotating attack zones. The player takes damage in any active sector.
+
+```
+Event: System > Every tick
+  Action: BossZone.SimpleVisionCast > Set facing angle offset to BossZone.Angle + BossRotationOffset
+  Condition: BossZone.SimpleVisionCast > Point Player.X, Player.Y is in visibility
+    Action: Player > Subtract 5 from Health
+```
+
+Spawn three separate BossZone instances at 120° offsets with independent SVC cones.
+
+---
+
+### 18. Sound radius — music volume by distance
+
+**Scenario:** A radio object plays music louder as the player gets closer, but sound is blocked by walls.
+
+```
+Event: System > Every tick
+  Condition: Radio.SimpleVisionCast > Point Player.X, Player.Y is in visibility
+    // Player is within unobstructed range — use polygon area as proximity proxy
+    Action: MusicChannel > Set volume to -1 * (distance(Radio.X, Radio.Y, Player.X, Player.Y) / Radio.SimpleVisionCast.ARange * 50)
+  Else:
+    Action: MusicChannel > Set volume to -50
+    // Muffled when walls obstruct
+```
+
+---
+
+### 19. Security camera network
+
+**Scenario:** Four cameras cover overlapping areas. If any camera sees the player, an alarm fires.
+
+```
+Event: System > Every tick (for each Camera)
+  Condition: Camera.SimpleVisionCast > Point Player.X, Player.Y is in visibility
+  Condition: AlarmActive = false
+    Action: System > Set variable AlarmActive to true
+    Action: Alarm > Play
+    Action: AllGuards > Set state to "Alert"
+```
+
+Each camera has a 60° cone at different facing angles and a shared "wall" obstacle tag.
+
+---
+
+### 20. Light switch — toggle room illumination
+
+**Scenario:** A light switch turns on/off a ceiling light that reveals the room.
+
+```
+Event: Player presses E near LightSwitch
+  Condition: LightSwitch.IsOn = true
+    Action: LightSwitch > Set variable IsOn to false
+    Action: CeilingLight.SimpleVisionCast > Set enabled to false
+    Action: CeilingLight.SimpleVisionCast > Reset mesh
+  Else:
+    Action: LightSwitch > Set variable IsOn to true
+    Action: CeilingLight.SimpleVisionCast > Set enabled to true
+    Action: CeilingLight.SimpleVisionCast > Enable mesh deform
+```
+
+---
+
+### 21. Sonar pulse animation
+
+**Scenario:** A submarine sends a sonar ping that expands outward, revealing submarines and mines.
+
+```
+Event: Player presses Space (sonar)
+  Action: SonarPulse > Set position to Sub.X, Sub.Y
+  Action: SonarPulse.SimpleVisionCast > Set range to 10
+  Action: System > Create timeline "SonarExpand"
+
+Event: Timeline "SonarExpand" > Every tick
+  Condition: SonarPulse.SimpleVisionCast.ARange < 800
+    Action: SonarPulse.SimpleVisionCast > Set range to SonarPulse.SimpleVisionCast.ARange + 20
+  Else:
+    Action: SonarPulse.SimpleVisionCast > Disable mesh deform
+    Action: SonarPulse.SimpleVisionCast > Set enabled to false
+
+Event: SonarPulse.SimpleVisionCast > On polygon updated
+  Sub-event: For each Mine
+    Condition: SonarPulse.SimpleVisionCast > Point Mine.X, Mine.Y is in visibility
+      Action: Mine > Start "Ping" animation
+```
+
+---
+
+### 22. Turret with blind spot
+
+**Scenario:** A turret has a 270° cone (leaving a 90° blind spot behind). Sneaking through the blind spot is the puzzle.
+
+```
+Event: System > On start of layout
+  Action: Turret.SimpleVisionCast > Set cone of view to 270
+  Action: Turret.SimpleVisionCast > Set facing angle offset to Turret.Angle
+
+Event: System > Every tick
+  Condition: Turret.SimpleVisionCast > Point Player.X, Player.Y is in visibility
+    Action: Turret > Fire at Player
+```
+
+Place the blind spot indicator as a visual overlay on the Turret sprite so the player can orient themselves.
+
+---
+
+### 23. Minimap fog reveal
+
+**Scenario:** The minimap shows only the areas the player has already illuminated.
+
+```
+Event: Player.SimpleVisionCast > On polygon updated
+  Sub-event: For i = 0 to Player.SimpleVisionCast.CountPolyPoints - 1
+    Action: MinimapFogCanvas > Erase at
+      Player.SimpleVisionCast.GetPolyPointX(i) * MinimapScale,
+      Player.SimpleVisionCast.GetPolyPointY(i) * MinimapScale,
+      radius 3
+```
+
+The minimap canvas starts fully grey; polygon points erase the fog as the player explores.
 
 ---
 
 ### Other game use cases
 
-**Tower Defense:** Each tower is a Simple Vision Cast light with full-circle detection (`ray arc = 360`). When enemies enter LoS, the tower targets and fires. Fast detection intervals (`detection interval = 0`) ensure real-time targeting. Towers with longer detection intervals detect threats slower but run more efficiently.
+**Top-down stealth games** are the flagship genre for Simple Vision Cast. Every guard, camera, and patrol light can carry its own SVC instance. The designer controls how wide and how far each cone reaches, whether it rotates, and how quickly it reacts when the player crosses its path. Because `IsPointInVisibility` is a simple boolean check, tying guard states to detection is a handful of events rather than a custom raycasting script.
 
-**Stealth Puzzle Games:** Guards have narrow vision cones (`ray arc = 60-90`) with limited sight radius. Players sneak by avoiding line-of-sight. Use mesh deform disabled and low ray counts (16-32) to maximize performance. Tag-based obstacles (doors, walls) can be dynamically opened to create new paths.
+**Tower defense** games benefit from per-tower vision polygons that naturally respect maze geometry. A tower's range is not a circle - it is a polygon shaped by the maze walls. Enemies that dart behind barricades are genuinely safe. Upgrading a tower can widen its cone or extend its range at runtime, with the mesh reflecting the upgrade visually the same frame.
 
-**Dungeon Crawlers:** Multiple enemies with overlapping vision cones hunt the player. Use aggressive culling (`cull mode = radius_aabb`) and detection intervals to manage performance. Combine with a global darkness layer to simulate dungeon atmosphere; lights reveal small areas in the dark.
+**Horror survival** games use directional cones to give monsters a field of view that the player can exploit. Combine a narrow cone with `IsPointInVisibility` so the monster must turn to face the player before triggering a chase. An ambient 360° SVC with a short range simulates a monster's hearing radius - any footstep sound event can temporarily expand the range, making the game react to player noise in a spatially honest way.
 
-**Real-Time Strategy (RTS):** Unit-type specific vision (scouts see farther, workers see less). Each unit is a Simple Vision Cast light. Update fog-of-war texture from merged light polygons every frame for real-time fog effects.
+**Dungeon crawler and roguelikes** use SVC for both the visual atmosphere (torches, magical glows, cursed flames) and for gameplay - locked chests reveal their contents only when fully inside the player's cone, hidden passages reveal themselves as rays pass through breakable wall segments, and darkness serves as a real obstacle rather than a tint effect.
 
-**Action Roguelike:** Weapons (sword range, bow range, spell cone) are modeled as detection lights. When an enemy enters a weapon's LoS, trigger hit/damage logic. High ray counts (96+) create smooth hit detection for sword arcs.
+**Real-time strategy and tactical RPG games** adopt SVC for fog of war. Each unit has a vision cone sized to their stats. Cloaking abilities disable the SVC behavior; scouting upgrades increase range and density at runtime. The `PolygonArea` expression becomes a numerical representation of how much of the map a unit currently controls.
 
-**Survival Horror:** Dynamic lighting from player-held torches and environmental lights creates tension. Mesh deform with additive blend visualizes light cones. Multiple obstacles cast overlapping shadows. Lower ray counts (32-48) and smaller radius (150-250 pixels) for a claustrophobic feel.
+**Puzzle platformers** turn the visibility system into an interactive obstacle. Spotlights, lasers, and detection fields are visible mechanics the player must navigate. The narrow-cone sonar ping pattern (expand range over time, detect on polygon update) creates a one-button puzzle mechanic with no scripting.
 
-**Puzzle Adventure:** Environmental lights reveal hidden paths or interactive objects. Use `is point in visibility` to detect when a puzzle element becomes illuminated. Combine with animation tweens to create timed puzzle challenges.
+**Point-and-click adventure games** use SVC to gate interactable objects - the player can only examine an object once it falls within their current looking direction. Combine with the `OnPolygonUpdated` trigger to smoothly reveal investigation prompts as the camera pans or the player character rotates.
 
-**Billiards and Pinball:** Use `RayHitReflectAngle` to predict where a ball will travel after hitting a wall. Aim guides in billiards draw from the cue ball to the obstacle hit point, then draw the reflected direction line. Each successive bounce uses the previous reflect angle as the next ray direction.
+**Side-scrolling action games** mount SVC on projectiles to give them a "proximity fuse" quality - a missile explodes when its forward cone first intersects an obstacle's polygon points. SVC on a side-scroller requires obstacle mode Tag; tag only the geometry that should block the cone, not the floor.
 
-**Magic Spell Bouncing:** A fireball or laser spell ricochets off walls. On `On ray hit`, read `RayHitReflectX/Y` and spawn the next projectile segment from there aimed at `RayHitReflectAngle`. Chain multiple bounces for multi-reflect spells.
+**Racing games** use SVC as headlight simulation. Two narrow-cone SVC instances on each car illuminate the road ahead and cast shadows from barriers and other cars. Reducing ray density to 25% and updating the mesh every other frame keeps the effect cheap enough for a full grid of AI cars.
 
-**Light Beam Puzzles:** Classic mirror-maze puzzle. A laser emitter casts a ray; mirrors redirect the beam using their surface normal and reflect angle. Read `RayHitNormalAngle` to draw the incoming-angle indicator on the mirror sprite. Solve the puzzle when the beam hits the target receptor.
+**Survival crafting games** give lanterns and campfires a 360° visibility polygon that drives heat and light mechanics simultaneously. If the player is inside the polygon they gain warmth; if wildlife is inside they are attracted or repelled. The same polygon drives the visual. Disabling mesh deform at night when the player is far from the fire reclaims that budget instantly.
 
-**Ricochet Weapons:** A thrown knife or bouncing grenade predicts its path by walking the reflect chain. Before launching, compute multiple reflect hops using `RayHitReflectX/Y/Angle` and draw a trajectory arc preview.
+**Metroidvania and exploration games** use SVC to simulate a helmet's built-in visor or the glow of a power-up. When the player acquires a new ability, swapping the obstacle mode from Tag to Solid (to reveal all objects, not just tagged ones) becomes the mechanical expression of the upgrade - a one-liner action that changes the entire world's visual presentation.
 
-**Surface Material Detection:** Identify obstacle type from `RayHitUID` when `On ray hit` fires, then use `RayHitNormalAngle` to decide the material response. Metal surfaces reflect fully (spawn spark particle along the normal), wood surfaces absorb (spawn splinter particle), water surfaces spawn ripple along the tangent (normal + 90).
+**MOBA-style games** need dense vision overlap from many instances. SVC's candidate cap (`SetMaxObstacleCandidates`) and stagger system make it viable for a full team of five hero instances plus dozens of minions, each with their own vision polygons, without saturating the frame budget.
 
-**Sound Propagation:** Simulate echoes by casting rays from a sound source. When a ray hits a surface, record `RayHitX/Y` and `RayHitNormalAngle`. Spawn an echo-emitter at the hit point oriented to the reflect angle. Repeat for secondary bounces. Distance controls echo volume (closer hit = louder echo).
+**Submarine and naval combat games** use expanding-range sonar pings (incrementally increasing `SetRange` each frame) to reveal enemy positions in the dark. Because the polygon only extends through open water - walls and islands occlude it - the sonar naturally respects geometry.
 
-**Damage Falloff by Angle of Incidence:** A projectile deals more damage to surfaces it hits head-on than glancingly. Compute the angle between the ray direction and the surface normal using the dot product of the incoming direction and `RayHitNormalX/Y`. Perpendicular hit (normal angle matches ray) = full damage; grazing hit = reduced damage.
+**City builder and management games** use SVC for NPC pathing awareness - a city guard's cone of view determines which citizens they interact with. Disabling mesh deform on every guard and only enabling it for the currently selected guard keeps the display clean while all detection logic runs silently.
 
-**Wall-Hugging AI Pathfinding:** An AI agent uses Simple Vision Cast rays to feel its surroundings. `RayHitNormalX/Y` for the ray pointing toward the wall gives the surface tangent (rotate normal 90 degrees) to follow along the wall. The AI steers its velocity toward that tangent to slide along walls naturally.
+**Escape room games** reward players who position themselves carefully - a clue is only readable when both the player's torch and the static room light share the same patch of wall. The intersection of two visibility polygons can be approximated by checking `IsPointInVisibility` on both SVC instances.
 
-**Sliding and Deflection Physics:** A puck or bubble that slides along walls instead of stopping reads `RayHitReflectAngle` to redirect velocity. No physics behavior required; pure event-sheet math: `Ball.angle = RayHitReflectAngle`, `Ball.Speed = Ball.Speed * 0.85` for friction.
+**Educational and narrative games** deploy SVC as a dramatic spotlight - a narrator's spotlight that follows the key object in a scene, leaving everything else in shadow. The spotlight is an SVC instance on an invisible sprite; only the lit objects are rendered with normal blending.
 
-**Shooting Gallery and Aim Assist:** Draw a target reticle at the predicted first hit point by checking `RayHitX/Y` each frame for the player's aim ray. Additionally show the bounce preview at `RayHitReflectX/Y` to help players understand where reflected shots go, a common mechanic in top-down shooters.
+**Farming and life simulation games** tie SVC to NPC awareness - a farmer notices if a crop plot falls in their forward 90° cone at close range, triggering harvest or watering animations. This is a pure gameplay-logic use; mesh deform is disabled, and `IsPointInVisibility` drives the NPC's daily routine.
 
-**Procedural Dungeon Lighting:** At room generation time, cast rays from each light source and record `RayHitX/Y` for all primary rays. Store these points in an array. When the player moves, skip recasting; just test the player against the stored polygon. Combine with `RayHitNormalAngle` to determine wall face direction for placing shadow decals.
+**Battle royale and arena shooters** use a per-player SVC for the "heard footsteps" ring - a brief expanding pulse that highlights enemies briefly without revealing them permanently. The short lifetime (start range 0, grow to 400 over 0.5 seconds, then destroy) creates a mechanical heartbeat that skilled players can use to locate threats.
 
-**Reflective Surface Effects:** When a ray hits a mirror-tagged obstacle (`RayHitUID` identifies a Mirror instance), read `RayHitNormalAngle` and spawn a secondary Simple Vision Cast behavior on a hidden sprite positioned at `RayHitX/Y` with its facing angle set to `RayHitReflectAngle`. That secondary light sources the reflected light further into the scene.
+**Puzzle-platformer light reflection games** simulate mirrors by spawning a secondary SVC instance at each mirror's position, setting its facing angle to the reflected angle, and treating it as a "child" of the original beam. No actual ray-reflection math is needed - each SVC independently occludes.
 
-**Periscope / Surveillance Camera:** A security camera behavior checks an area using a narrow cone (`ray arc = 15`, `ray count = 8`). On ray hit, use `RayHitNormalAngle` to determine if the ray struck the front face of a door (normal facing outward) vs the side face. Different face normals trigger different alarms.
+**Rhythm action games** use a spinning SVC cone as the "hit zone" - the cone sweeps in sync with the BPM. A note is only valid when it falls inside the cone at the moment of the beat event. This combines audio timing with spatial logic in a way that feels completely natural to the player.
 
-**Invisible Wall Detection:** For accessibility, indicate to the player which way to push against an obstacle. When a player-attached light ray hits a blocking wall, read `RayHitNormalAngle` and display an arrow sprite at `RayHitX/Y` rotated to that angle, pointing away from the surface.
+**Tactical card games with a board** use SVC to drive "flanking bonuses" - a unit's attack stat is boosted when the target is inside their cone but outside the target's own cone, implementing a positional advantage system without any manual angle math.
 
-**Dynamic Shadow Casting for Sprites:** Pair each sprite with a Simple Vision Cast instance and a shadow sprite. In `On ray hit`, position shadow-geometry vertices at `RayHitX/Y`. Use `RayHitNormalX/Y` to project the shadow polygon in the opposite-normal direction. Update shadow mesh geometry in real time as the light or obstacles move.
+**Space exploration games** use SVC as the sensor sweep of a scanning probe. As the probe orbits a planet, the narrow forward cone sweeps across the surface, revealing terrain tiles, resources, and anomalies. The planet geometry acts as the obstacle set.
 
-**Arena Shooters with Wall Bounce:** Players fire shots that bounce off walls. Before shooting, preview the bounce using `RayHitReflectX/Y` and `RayHitReflectAngle` from a cast at the mouse direction. Display a dashed line from weapon to first hit point, then from hit point to reflect endpoint, giving the player a bounce aiming guide.
-
-**Water and Glass Refraction Visuals:** When a ray hits a water-tagged surface, use `RayHitNormalX/Y` to compute the refraction vector (approximate with slight bend from the normal). Spawn a distortion sprite at `RayHitX/Y` stretched along the surface tangent (normal rotated 90) to simulate water caustics.
-
-**Topdown Car Reflections:** Racing game headlights cast rays. When hitting a building wall, read `RayHitNormalAngle` to spawn a glint sprite on the wall face, rotated to the normal angle. Glint fades with distance from the hit point. Multiple rays from the same headlight create a sweep of glints across the wall.
-
-**2D Raytracing Preview Tool:** Build a simple in-editor light preview by casting rays from a placed light marker and drawing lines between each `GetPolyPointX/Y` using a Canvas plugin. For hit obstacles, draw the surface normal as a short line from `RayHitX/Y` in the direction of `RayHitNormalAngle`. Useful for lighting artists debugging a level before adding real assets.
+**Underwater exploration games** use a dim, short-range 360° SVC to simulate bioluminescent vision in the deep sea. The range dynamically shrinks as the player descends (increasing pressure / less light), creating spatial tension through a simple `SetRange` expression tied to the player's depth variable.
 
 ---
 
-## 15. C3 Debugger
+## 16. Using Simple Vision Cast with the Built-in Line of Sight Behavior
 
-Simple Vision Cast includes a debugger section accessible via the **Construct 3 Inspector** panel during preview.
+Construct 3's built-in **Line of Sight** (LoS) behavior answers a single binary question: "does object A have a clear straight line to object B?" Simple Vision Cast answers a much broader one: "what is the full polygon of space that object A can see?" These two behaviors are complementary, and combining them produces AI that is both spatially aware *and* precisely accurate.
 
-### Opening the Debugger
+### Why use both?
 
-1. Start a preview session (`F5` or **Run layout**).
-2. Press **F12** to open **Developer Tools** (or **Ctrl+Shift+I**).
-3. In the **Inspector** tab, select your Simple Vision Cast instance.
-4. The **Debugger** section expands, showing live state.
-
-### Debugger Fields
-
-| Field | Type | Meaning |
+| Capability | Simple Vision Cast | Built-in Line of Sight |
 |---|---|---|
-| **obstacleMode** | Text | Current obstacle collection mode: `"solid_behaviour"`, `"custom_objects"`, or `"tag"`. |
-| **polyPointCount** | Integer | Number of vertices in the current visibility polygon. Indicates raycast complexity. |
-| **obstacleCandidateCount** | Integer | How many potential obstacle instances were tested during the last broadphase cull. High values indicate performance bottlenecks. |
-| **visibleObjectCount** | Integer | Number of detection-tagged objects currently inside the polygon. |
-| **activeTags** | Text | Comma-separated list of active obstacle tags (if in Tag mode). |
-| **lastRaycastMs** | Float | Time (in milliseconds) the last raycast operation took. Use to profile performance. |
+| Compute a full visibility polygon | ✔ | ✗ |
+| Cheap pre-filter (is target in cone?) | ✔ (IsPointInVisibility) | ✗ |
+| Precise single ray to a specific target | ✗ | ✔ |
+| Respects Solid behavior obstacles natively | ✔ (Solid mode) | ✔ |
+| Range cone with custom angle | ✔ | Partial (range only) |
+| Per-vertex polygon data (hit UIDs) | ✔ | ✗ |
+| Mesh rendering of visibility area | ✔ | ✗ |
+| Performance on many instances | Configurable | Lightweight for single checks |
 
-### Using the Debugger
+### The two-pass detection pattern
 
-**Performance profiling:** Check `lastRaycastMs` to see if raycasting is the bottleneck. If it's > 5ms, reduce ray count or enable culling.
+The most efficient stealth guard implementation uses SVC as a **broad phase** pre-filter, then Line of Sight as a **narrow phase** confirmation.
 
-**Configuration validation:** Verify `obstacleMode` and `activeTags` to ensure the setup matches your intent.
+```
+Event: System > Every tick (for each Guard)
+  // Pass 1: broad phase — is the player roughly in the guard's cone?
+  Condition: Guard.SimpleVisionCast > Point Player.X, Player.Y is in visibility
+    // Pass 2: narrow phase — is there actually a clear direct line?
+    Condition: Guard.LineOfSight > Has line of sight to Player
+      Action: Guard > Set state to "Alert"
+      Action: Guard > Set target to Player
+```
 
-**Visibility inspection:** Monitor `polyPointCount` and `visibleObjectCount` in real-time. Sudden spikes might indicate missed optimization.
+**Why the two-pass approach?** `IsPointInVisibility` is a polygon point-in-polygon test - very fast. The built-in Line of Sight behavior uses a separate collision-based ray. Running LoS on every guard every frame is cheap, but if you have 50 guards and 20 enemies, 1,000 LoS checks per frame add up. Filtering with SVC first means LoS only runs when SVC already confirms the target is plausibly in range.
 
-Example: If `obstacleCandidateCount` is very high (1000+) in a large level, enable `cull mode = radius_aabb` to reduce testing overhead.
+### Sharing obstacle sets
+
+Both behaviors can share the same obstacle objects. If you use **Solid mode** on SVC, the same objects that block SVC rays also block the built-in LoS automatically, no duplicate configuration.
+
+If you use **Tag mode** on SVC, add the built-in LoS behavior's obstacle setting to match. This keeps both systems consistent.
+
+### Using SVC for visuals, LoS for logic
+
+SVC renders the light cone beautifully. The built-in LoS can confirm a single crisp ray without the polygon overhead. Use them on different objects for a clean separation of concerns:
+
+```
+// LightCone sprite: SVC for mesh rendering (visual only)
+Event: System > On start of layout
+  Action: LightCone.SimpleVisionCast > Enable mesh deform
+  Action: LightCone.SimpleVisionCast > Set cone of view to 70
+  Action: LightCone.SimpleVisionCast > Set range to 400
+
+// Guard sprite: built-in LoS for confirmation
+Event: System > Every tick
+  Condition: Guard.LineOfSight > Has line of sight to Player
+  Condition: distance(Guard.X, Guard.Y, Player.X, Player.Y) < 400
+    Action: Guard > Set state to "Alert"
+```
+
+Here the visual cone is driven by SVC; the detection decision is made by LoS. If you later want to mirror the detection to the visual, add `IsPointInVisibility` as the pre-filter on the Guard's SVC instance.
+
+### Detecting peripheral targets with SVC, then confirming with LoS
+
+SVC's polygon can be queried for *all* points hit by rays, while LoS checks one target at a time. For games with many enemy NPCs, iterate the polygon to cheaply identify which UIDs are in view, then run a targeted LoS check only for those UIDs:
+
+```
+Event: Guard.SimpleVisionCast > On polygon updated
+  Sub-event: For i = 0 to Guard.SimpleVisionCast.CountPolyPoints - 1
+    Condition: Guard.SimpleVisionCast.GetPolyHitUID(i) >= 0
+      // A polygon vertex hit something — is it a civilian NPC?
+      Condition: System > Pick instance with UID Guard.SimpleVisionCast.GetPolyHitUID(i)
+        Condition: Civilian exists
+          // Narrow-phase confirm
+          Condition: Guard.LineOfSight > Has line of sight to Civilian
+            Action: Guard > Shout "Stop right there!"
+```
+
+### Expanding LoS range when SVC polygon shrinks
+
+As walls close in, the SVC polygon area decreases. You can use `PolygonArea` to dynamically adjust how aggressively the guard checks:
+
+```
+Event: System > Every tick
+  Condition: Guard.SimpleVisionCast.PolygonArea < 5000
+    // Guard is in a tight corridor — rely more on proximity LoS
+    Action: Guard.LineOfSight > Set range to 500
+  Else:
+    Action: Guard.LineOfSight > Set range to 300
+```
+
+### Summary of combination patterns
+
+| Pattern | SVC role | LoS role |
+|---|---|---|
+| Two-pass detection | Broad-phase cone pre-filter | Narrow-phase single target confirm |
+| Visual + logic separation | Mesh deform for light rendering | Binary detection per target |
+| Polygon UID scan + confirm | Identify which objects are hit | Confirm clear line to each hit object |
+| Adaptive LoS range | PolygonArea drives LoS range value | Adjustable range from SVC input |
 
 ---
 
-## 16. Scripting
+## 17. Scripting (C3 Script / JavaScript)
 
-Simple Vision Cast exposes several actions and methods for C3 Script and JavaScript integration.
+### Accessing the behavior
 
-### Accessing the Behavior
-
-In a script file, access the Simple Vision Cast behavior like this:
+Because Simple Vision Cast is a behavior, access it from the instance's `behaviors` object. The name used in script is the **behavior's name as set in the Construct project** (the name shown in the Behaviors panel), not the addon ID.
 
 ```javascript
-// Get the behavior instance attached to a sprite
-const lightBehavior = mySprite.behaviors.SimpleVisionCast;
-
-// Check if the behavior exists
-if (!lightBehavior) {
-  console.log("Simple Vision Cast not attached to this sprite");
-}
+const inst = runtime.objects.Guard.getFirstInstance();
+const svc = inst.behaviors.SimpleVisionCast;
 ```
 
-**Important:** The behavior name in script is **"SimpleVisionCast"** (the addon display name without spaces). Construct uses the display name, not the internal ID, for script access.
+### Calling actions from script
 
-### Calling Actions from Script
-
-Actions with `expose: true` are callable directly from the behavior prototype. Method names are **PascalCase**, derived from the action filename. For example:
+All ACEs marked `expose: true` are copied directly onto the behavior prototype. The method name is derived from the ACE filename in PascalCase. Calling from script produces the same side effects as the event sheet action.
 
 ```javascript
-// From a.SetObstacleMode.js → SetObstacleMode()
-lightBehavior.SetObstacleMode("solid_behaviour");
+// Set range and cone
+svc.SetRange(400);
+svc.SetConeOfView(90);
+svc.SetRayDensity(75);
 
-// From a.SetLightRadius.js → SetLightRadius()
-lightBehavior.SetLightRadius(400);
+// Obstacle setup
+svc.SetObstacleMode(0);   // 0 = solid_behaviour, 1 = custom_objects, 2 = tag
+svc.SetObstacleTag("wall,pillar");
+svc.AddObstacleTag("crate");
+svc.RemoveObstacleTag("crate");
 
-// From a.EnableMeshDeform.js → EnableMeshDeform()
-lightBehavior.EnableMeshDeform();
+// Mesh
+svc.EnableMeshDeform();
+svc.DisableMeshDeform();
+svc.ResetMesh();
+svc.SetMeshPinOrigin(0.5, 1.0);
 
-// From a.AddObstacleObject.js → AddObstacleObject()
-lightBehavior.AddObstacleObject(runtime.objects.Wall);
+// Performance
+svc.SetMeshUpdateInterval(3);
+svc.SetMeshStaggerMode(0);  // 0 = stable, 1 = hybrid
+svc.SetRaycastSkipRate(5);
+svc.SetMaxObstacleCandidates(20);
+
+// State
+svc.SetEnabled(true);
 ```
 
-**Combo parameters** arrive as **0-based indices**. For example, `SetObstacleMode` expects a combo value:
+> **Combo parameters arrive as 0-based indices.** `SetObstacleMode(0)` is Solid, `(1)` is Custom objects, `(2)` is Tag. `SetMeshStaggerMode(0)` is Stable, `(1)` is Hybrid.
+
+### Reading state from script
+
+Public getter methods on the instance class are callable from script:
 
 ```javascript
-// Combo values: 0 = "solid_behaviour", 1 = "custom_objects", 2 = "tag"
-lightBehavior.SetObstacleMode(0);  // Same as "solid_behaviour"
-lightBehavior.SetObstacleMode(2);  // Same as "tag"
+// Configuration
+svc._getActiveRange();           // current range in pixels
+svc._getActiveConeOfView();      // current cone angle
+svc._getActiveFacingAngle();     // current facing offset
+svc._getActiveObstacleMode();    // "solid_behaviour" | "custom_objects" | "tag"
+svc._getActiveObstacleTag();     // current tag string
+
+// Polygon data
+svc._countPolyPoints();
+svc._getPolyPointX(i);
+svc._getPolyPointY(i);
+svc._getPolyPointAngle(i);
+svc._getPolyPointDist(i);
+svc._getPolyHitUID(i);
+svc._getPolygonAreaExpression();
+svc._getLastPolygonUpdateTime();
+
+// Performance
+svc._lastRaycastMs;
+svc._obstacleCandidateCount;
+
+// State flags
+svc._isEnabled();
+svc._isMeshDeformEnabled();
+svc._isPointInVisibility(worldX, worldY);
 ```
 
-### Reading State from Script
-
-Simple Vision Cast exposes no direct getter methods for state. Use **expressions** instead. In a script context, you can access expressions through the debugger info:
+### Listening to triggers from script
 
 ```javascript
-// Expressions are not directly callable from script.
-// Instead, use the debugger or create event actions that set variables.
-
-// Alternative: Store state in variables and update them in events:
-Event: Simple Vision Cast: On polygon updated
-  Action: Variable polygonPoints: Set to SimpleVisionCast.CountPolyPoints
-
-// Then in script:
-let polyCount = polygonPoints.value;
-```
-
-### Listening to Events from Script
-
-Subscribe to Simple Vision Cast triggers using `addEventListener`:
-
-```javascript
-lightBehavior.addEventListener("OnObjectEnterLoS", () => {
-  console.log("Object entered LoS! UID:", lightBehavior.GetProperty("LoSEntrantUID"));
+svc.addEventListener("OnPolygonUpdated", () => {
+  const area = svc._getPolygonAreaExpression();
+  console.log("Polygon area:", area);
 });
 
-lightBehavior.addEventListener("OnObjectExitLoS", () => {
-  console.log("Object exited LoS! UID:", lightBehavior.GetProperty("LoSExitantUID"));
+svc.addEventListener("OnMeshNotReady", () => {
+  console.warn("No writable mesh found — check sprite mesh settings.");
 });
 
-lightBehavior.addEventListener("OnPolygonUpdated", () => {
-  console.log("Polygon updated. Point count:", lightBehavior.GetProperty("CountPolyPoints"));
+svc.addEventListener("OnObstacleModeChanged", () => {
+  console.log("Obstacle mode is now:", svc._getActiveObstacleMode());
 });
 
-lightBehavior.addEventListener("OnRayHit", () => {
-  console.log("Ray hit! Hit UID:", lightBehavior.GetProperty("RayHitUID"));
+svc.addEventListener("OnObstacleTagChanged", () => {
+  console.log("Obstacle tag is now:", svc._getActiveObstacleTag());
 });
 ```
 
-**Note:** Event-context accessors (like `LoSEntrantUID`) must be read via `GetProperty()` within the callback, as they are only valid during the event.
-
-### Looping Patterns
-
-If the addon exposes Count + Index expressions (e.g., `CountVisibleObjects` + `GetVisibleObjectUID`), use a `for` loop:
+### Looping polygon points
 
 ```javascript
-// Get all visible objects
-const visibleCount = lightBehavior.GetProperty("CountVisibleObjects");
-for (let i = 0; i < visibleCount; i++) {
-  const uid = lightBehavior.GetProperty(`GetVisibleObjectUID(${i})`);
-  console.log(`Visible object ${i}:`, uid);
-}
-
-// Get all polygon points
-const polyCount = lightBehavior.GetProperty("CountPolyPoints");
-for (let i = 0; i < polyCount; i++) {
-  const x = lightBehavior.GetProperty(`GetPolyPointX(${i})`);
-  const y = lightBehavior.GetProperty(`GetPolyPointY(${i})`);
-  console.log(`Polygon point ${i}: (${x}, ${y})`);
-}
-```
-
-### Complete Example
-
-Here's a realistic script usage combining actions, state queries, and event listeners:
-
-```javascript
-// Initialize a guard light
-class Guard {
-  constructor(guardSprite) {
-    this.sprite = guardSprite;
-    this.light = guardSprite.behaviors.SimpleVisionCast;
-    this.detectedEnemies = new Set();
-    this.state = "idle";
-    
-    // Set up light
-    this.light.SetObstacleMode(0); // solid_behaviour
-    this.light.SetLightRadius(250);
-    this.light.SetRayArc(90);
-    this.light.SetRayDensity(25);
-    this.light.SetDetectionTag("enemy");
-    
-    // Listen for detections
-    this.light.addEventListener("OnObjectEnterLoS", () => this.onEnemySeen());
-    this.light.addEventListener("OnObjectExitLoS", () => this.onEnemyLost());
+const count = svc._countPolyPoints();
+for (let i = 0; i < count; i++) {
+  const x = svc._getPolyPointX(i);
+  const y = svc._getPolyPointY(i);
+  const uid = svc._getPolyHitUID(i);
+  if (uid >= 0) {
+    console.log(`Ray ${i} hit obstacle UID ${uid} at (${x.toFixed(1)}, ${y.toFixed(1)})`);
   }
-  
-  onEnemySeen() {
-    const enemyUID = this.light.GetProperty("LoSEntrantUID");
-    this.detectedEnemies.add(enemyUID);
-    this.state = "alert";
-    console.log(`Guard alert! Enemy detected: ${enemyUID}`);
-  }
-  
-  onEnemyLost() {
-    const enemyUID = this.light.GetProperty("LoSExitantUID");
-    this.detectedEnemies.delete(enemyUID);
-    if (this.detectedEnemies.size === 0) {
-      this.state = "searching";
-      console.log("All enemies lost sight of. Returning to patrol.");
+}
+```
+
+### Complete example — adaptive guard in script
+
+```javascript
+// In a C3 script attached to the Guard object
+runOnStartOfLayout(() => {
+  const guard = runtime.objects.Guard.getFirstInstance();
+  const svc = guard.behaviors.SimpleVisionCast;
+
+  svc.SetConeOfView(90);
+  svc.SetRange(350);
+  svc.SetObstacleMode(2);   // Tag mode
+  svc.SetObstacleTag("wall");
+  svc.SetRayDensity(50);
+
+  svc.addEventListener("OnPolygonUpdated", () => {
+    const player = runtime.objects.Player.getFirstInstance();
+    if (!player) return;
+
+    const inSight = svc._isPointInVisibility(player.x, player.y);
+    if (inSight && guard.instVars.state !== "Alert") {
+      guard.instVars.state = "Alert";
+      runtime.objects.AlarmSound.getFirstInstance()?.behaviors.Audio?.playAt(guard.x, guard.y);
     }
-  }
-  
-  getDetectedEnemies() {
-    return Array.from(this.detectedEnemies);
-  }
-  
-  setAlertLevel(level) {
-    // Adjust light properties based on alert level
-    this.light.SetRayDensity(level === "high" ? 80 : 40);
-    this.light.SetDetectionInterval(level === "high" ? 0 : 0.2);
-  }
-}
-
-// Usage
-const guardSprite = runtime.objects.Guard.getAllInstances()[0];
-const guard = new Guard(guardSprite);
-
-// Check detected enemies each frame
-setInterval(() => {
-  const enemies = guard.getDetectedEnemies();
-  console.log(`Guard is tracking ${enemies.length} enemies`);
-}, 1000);
-```
-
----
-
-## 17. Surface Normals and Reflections
-
-Every time a primary ray hits an obstacle, Simple Vision Cast computes the **surface normal** and the **reflected ray direction** for that hit. These are available as expressions inside the `On ray hit` trigger and let you build physically-grounded reactions to light and projectiles touching surfaces.
-
-### Key Expressions
-
-| Expression | Returns | What it gives you |
-|---|---|---|
-| `RayHitNormalX` | Float (-1 to 1) | X component of the unit surface normal at the hit point. |
-| `RayHitNormalY` | Float (-1 to 1) | Y component of the unit surface normal at the hit point. |
-| `RayHitNormalAngle` | Float (0-360 degrees) | Angle of the normal, convenient for rotating sprites. |
-| `RayHitReflectX` | Float (world pixels) | World X of the reflected ray endpoint (hit point + reflected direction * remaining radius). |
-| `RayHitReflectY` | Float (world pixels) | World Y of the reflected ray endpoint. |
-| `RayHitReflectAngle` | Float (0-360 degrees) | Direction angle of the reflected ray, ready to plug into an object angle or Bullet behavior. |
-
-### How Normals Are Computed
-
-When a ray hits a segment of an obstacle polygon, Simple Vision Cast takes the segment vector `(x2-x1, y2-y1)`, rotates it 90 degrees to get the perpendicular, normalizes it to unit length, and then flips it if needed so it faces toward the ray source. This gives a normal that always points away from the surface toward open space.
-
-### How the Reflect Endpoint Is Computed
-
-The reflected direction is `r = d - 2*(d dot n)*n`, where `d` is the incoming ray unit direction and `n` is the surface normal. The reflect endpoint is the hit point plus that reflected direction times the remaining ray distance (`light_radius - hit_dist`). This means the reflect endpoint represents where the ray would have traveled if the surface were a perfect mirror.
-
-### All six expressions are valid inside `On ray hit` only
-
-They are set fresh for each primary ray that hits. Reading them outside an `On ray hit` handler gives you the values from the most recent hit, which may not be meaningful.
-
-### Use Case: Laser Bounce Preview
-
-Draw a two-segment laser line: the initial ray to the wall and then the bounce.
-
-```
-Event: Simple Vision Cast: On ray hit
-  Action: Line: Set start -> RayHitX - Light.X, RayHitY - Light.Y  // first segment
-  Action: BounceIndicator: Set position -> RayHitX, RayHitY
-  Action: BounceIndicator: Set angle -> RayHitReflectAngle
-  Action: BounceIndicator.length: Set to ActiveLightRadius - RayHitDist
-  // BounceIndicator is a thin white sprite that shows where the reflected beam goes
-```
-
-### Use Case: Surface-Type Reactions
-
-Identify which obstacle was hit via `RayHitUID` and apply a material-specific effect oriented along the normal.
-
-```
-Event: Simple Vision Cast: On ray hit
-  // Spawn a spark particle on metal surfaces
-  Condition: RayHitUID == MetalWall.UID
-  Action: SparkEmitter: Create at RayHitX, RayHitY
-  Action: SparkEmitter: Set angle -> RayHitNormalAngle
-  Action: SparkEmitter: Emit 5 particles
-
-Event: Simple Vision Cast: On ray hit
-  // Spawn a scorch decal on wood surfaces
-  Condition: RayHitUID == WoodPanel.UID
-  Action: Scorch: Create at RayHitX, RayHitY
-  Action: Scorch: Set angle -> RayHitNormalAngle + 180  // face outward from wall
-```
-
-### Use Case: Wall-Bounce Projectile
-
-A bullet that bounces off walls instead of stopping.
-
-```
-Event: Simple Vision Cast: On ray hit
-  // Check if the bullet ray hit an obstacle
-  Condition: RayHitUID != -1
-  Action: Bullet: Move to RayHitX, RayHitY
-  Action: Bullet: Set angle -> RayHitReflectAngle
-  // Speed is unchanged; the Bullet behavior now travels in the reflected direction
-  Action: Bullet.bounces: Subtract 1
-
-Event: Bullet.bounces <= 0
-  Action: Bullet: Destroy
-```
-
-### Use Case: Normal-Aligned Shadow Decals
-
-Project a shadow blob onto a wall at the hit point, stretched along the wall face.
-
-```
-Event: Simple Vision Cast: On ray hit
-  Action: ShadowDecal: Create at RayHitX, RayHitY
-  Action: ShadowDecal: Set angle -> RayHitNormalAngle + 90  // align along wall tangent
-  Action: ShadowDecal: Set width -> 80
-  Action: ShadowDecal: Set height -> 12
-  // Flat rectangle lying flush against the wall surface
-```
-
-### Use Case: Echo Emitter for Sound Design
-
-Simulate acoustic reflections. When a sound source ray hits a surface, place an echo emitter at the hit point aimed in the reflect direction.
-
-```
-Event: Simple Vision Cast: On ray hit
-  // Only react to close hits (strong echo)
-  Condition: ActiveLightRadius - RayHitDist < 200
-  Action: EchoEmitter: Create at RayHitX, RayHitY
-  Action: EchoEmitter: Set angle -> RayHitReflectAngle
-  Action: EchoEmitter.volume: Set to 1 - (RayHitDist / ActiveLightRadius)
-  // Closer hit = louder echo
-```
-
-### Use Case: Mirror Objects in Light Puzzle
-
-Mirror tiles redirect a light beam. When the beam hits a mirror, spawn a secondary Simple Vision Cast emitter at the reflect position.
-
-```
-Event: Simple Vision Cast: On ray hit
-  Condition: (Pick Mirror by UID RayHitUID)  // UID belongs to a mirror tile
-  Action: ReflectedBeam: Create at RayHitX, RayHitY
-  Action: ReflectedBeam.SimpleVisionCast: Set facing angle -> RayHitReflectAngle
-  Action: ReflectedBeam.SimpleVisionCast: Set ray arc -> 10
-  Action: ReflectedBeam.SimpleVisionCast: Set ray count -> 8
-  // Narrow beam continues from mirror in the reflected direction
+  });
+});
 ```
 
 ---
 
 ## 18. Tips and Common Mistakes
 
-### 1. Detection Tag Must Be Set
+- **The sprite must be large enough to hold the mesh.** If the host sprite is smaller than the `Range` value, polygon vertices outside the sprite bounds will be clipped. Make the sprite at least `Range × 2` in both width and height, centered at the origin.
 
-If **Detection tag** is empty in properties, no `On object enter/exit LoS` events will fire. Set it to a non-empty string and tag your objects accordingly.
+- **Facing angle offset vs. object angle.** The cone always sweeps around `hostObject.Angle + facingOffset`. If you want the cone to follow the object's rotation automatically, leave the offset at 0 and rotate the object. If you want the cone to face independently (e.g. a mounted camera), control the offset instead and keep the object angle fixed.
 
-```
-// WRONG:
-Event: On start of layout
-  // Detection tag is empty in properties
-  // No events will fire
+- **Tag mode requires instances to exist before the first rebuild.** If you spawn wall objects after the behavior first runs, SVC picks them up on the next rebuild automatically. No re-registration is needed.
 
-// CORRECT:
-Event: On start of layout
-  Action: Light: Set detection tag -> "player"
-  Tag: Player instance with "player"
-  // Now events will fire
-```
+- **`IsPointInVisibility` uses the polygon from the last rebuild, not a real-time cast.** If the polygon update interval is set to 5 frames, the polygon used for point checks can be up to 5 frames stale. Use `On polygon updated` to run logic only after a fresh rebuild.
 
-### 2. Obstacle Mode Mismatches
+- **`GetPolyHitUID` returns -1 for open rays.** Not every polygon vertex hits an obstacle - rays that reach maximum range without hitting anything produce a vertex at the range boundary with UID -1. Filter these out when scanning for hit objects.
 
-Ensure your chosen **Obstacle mode** matches how obstacles are configured:
+- **Do not use `ResetMesh` in an every-tick event.** `ResetMesh` destroys the mesh deformation and disables it. Call it only when you intentionally want to clear the visual (e.g. on light switch off).
 
-- **Solid behaviour mode**: All obstacles must have the **Solid** behavior enabled. If a wall doesn't have Solid behavior, it won't block rays.
-- **Custom objects mode**: You must explicitly add object types via `Add obstacle object`. Adding a type adds ALL instances of that type.
-- **Tag mode**: All obstacles must be tagged with the specified tag. Untagged instances won't block rays.
+- **Custom objects mode needs at least one registered type.** If you switch to Custom objects mode without registering any types, the behavior has no candidates and produces a full-range polygon with no occlusion. Always register your types in the same event that sets the mode.
 
-### 3. Ray Density Too Low or Too High
+- **The behavior is per-instance, not per-type.** Changing the cone of view on one Guard does not affect other Guards. If you want to batch-update all guards, use a `for each Guard` loop.
 
-- **Too low** (< 10%): Visibility polygon looks jagged. At very low densities, rays may miss fine details.
-- **Too high** (> 100%): No benefit—capped at 100%, and uses more CPU than needed.
-- **Sweet spot**: 25–75% for most use cases. 50% is a solid balance.
+- **Savegame support is automatic.** All SVC state is written to and read from Construct's slot saves. Do not manually save and restore SVC configuration - it will double-apply.
 
-### 4. Light Radius Not Matching Level Scale
-
-If your level is 2000×2000 pixels but the light radius is 300, the light seems weak. Adjust radius to match the scale:
-
-```
-// Large level (2000×2000 pixels)
-Action: Light: Set light radius -> 800
-
-// Small level (500×500 pixels)
-Action: Light: Set light radius -> 150
-```
-
-### 5. Mesh Deform Without a Mesh Deformer
-
-The object's mesh deformer must be **enabled** before Simple Vision Cast can write to it. Some object types don't support mesh deformers (e.g., Tiledbackground):
-
-```
-// WRONG:
-// Select sprite, Mesh deformer = disabled
-// Simple Vision Cast tries to write anyway
-// Fires: On mesh not ready
-
-// CORRECT:
-// Select sprite, Mesh deformer = enabled
-// Simple Vision Cast writes successfully
-```
-
-### 6. Angle in Radians, Not Degrees
-
-When accessing the host's angle in script, remember it's in **radians**:
-
-```javascript
-// WRONG:
-const angle = lightBehavior.GetProperty("ActiveFacingAngle"); // In degrees
-const rad = angle; // Wrong! This is degrees, not radians
-
-// CORRECT:
-const angleDeg = lightBehavior.GetProperty("ActiveFacingAngle");
-const angleRad = (angleDeg * Math.PI) / 180;
-```
-
-### 7. Detection Only Works on Center Points
-
-Line-of-sight checks if an object's **center point** is inside the polygon. If an object is large but its center is outside, it won't be detected:
-
-```
-// WRONG:
-// A large enemy's center is outside the polygon
-// Even though parts of it are visible, detection doesn't trigger
-
-// CORRECT:
-// Only trigger actions when the object's center is inside
-Condition: Light: Is object in LoS -> Enemy
-Action: [Yes, center is inside]
-```
-
-### 8. Performance: Many Lights on Mobile
-
-Each Simple Vision Cast light costs performance. On mobile, use:
-
-- Fewer lights (combine multiple lights into one if possible).
-- Lower ray density (25% instead of 75%).
-- Larger detection intervals (0.5 seconds instead of every tick).
-- Enable `cull mode = radius_aabb` to reduce obstacle testing.
-
-### 10. Detection Interval vs. Polygon Update
-
-**Detection Interval** controls how often enter/exit events fire, NOT how often the polygon updates. The polygon always updates every frame (if raycasting happens). Use `Detection interval > 0` only to optimize detection checks:
-
-```
-// Fast polygon updates, slower detection
-Action: Light: Set detection interval -> 0.5
-// Polygon redraws every tick (smooth visuals)
-// Detection sweeps every 0.5 seconds (cheaper)
-```
-
-### 11. Custom Objects Mode Adds All Instances
-
-When you `Add obstacle object -> WallType`, **all current and future instances** of WallType block rays:
-
-```
-// Adds ALL Walls, not just specific ones
-Action: Light: Add obstacle object -> Wall
-
-// If you want selective blocking, use Tag mode instead:
-Action: Light: Set obstacle mode -> "Tag"
-Action: Light: Set obstacle tag -> "opaque"
-// Only tag the walls you want to block
-```
-
-### 12. Polygon Point Indices Out of Bounds
-
-Always check bounds before accessing polygon points:
-
-```
-Event: (some trigger)
-  Condition: Light: CountPolyPoints >= 3
-  Action: Logger: Log Light.GetPolyPointX(0)
-  
-  // WRONG: No bounds check
-  Condition: Light: CountPolyPoints >= 1
-  Action: Logger: Log Light.GetPolyPointX(99) // Crash if only 1 point
-```
-
----
-
-## Summary
-
-**Simple Vision Cast** is a powerful, production-ready behavior for line-of-sight detection and dynamic lighting in Construct 3. It abstracts away complex raycasting logic, provides flexible obstacle modes, and integrates seamlessly with mesh deformation for visual feedback. Whether you're building stealth games, tower defense, RTS, or dungeon crawlers, Simple Vision Cast handles the heavy lifting so you can focus on gameplay.
-
-Key takeaways:
-
-- Set **Detection tag** to enable enter/exit events.
-- Choose an **Obstacle mode** that fits your level design.
-- Adjust **Ray arc**, **Ray count**, and **Light radius** for your aesthetic.
-- Enable **Mesh deform** to visualize the light cone.
-- Use **Detection interval** to balance performance.
-
-Happy lighting!
+- **`OnRaycastBudgetExceeded` fires every frame the cost is over budget.** Do not reduce density inside this trigger without a cooldown, or you will fire a density reduction every frame, eventually reaching minimum quality. Use a boolean flag or a timer to gate the response.

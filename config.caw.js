@@ -14,8 +14,7 @@ export const minConstructVersion = undefined;
 export const author = "SalmanShh";
 export const website = "https://www.construct.net";
 export const documentation = "https://www.construct.net";
-export const description =
-  "Mesh-driven line of sight and dynamic lighting for world objects.";
+export const description = "Mesh-driven line of sight and dynamic lighting for world objects.";
 export const category = ADDON_CATEGORY.GENERAL;
 
 export const hasDomside = false;
