@@ -1,18 +1,11 @@
 <img src="./src/icon.svg" width="100" /><br>
 # Simple Vision Cast
 <i>Mesh-driven line of sight and dynamic lighting for world objects.</i> <br>
-### Version 1.0.0.0
+### Version 1.0.0.1
 
-[<img src="https://placehold.co/200x50/4493f8/FFF?text=Download&font=montserrat" width="200"/>](https://github.com/SalmanShhh/C3Addon_SimpleVisionCast/releases/download/salmanshh_simplevisioncast-1.0.0.0.c3addon/salmanshh_simplevisioncast-1.0.0.0.c3addon)
+[<img src="https://placehold.co/200x50/4493f8/FFF?text=Download&font=montserrat" width="200"/>](https://github.com/SalmanShhh/C3Addon_SimpleVisionCast/releases/download/salmanshh_simplevisioncast-1.0.0.1.c3addon/salmanshh_simplevisioncast-1.0.0.1.c3addon)
 <br>
 <sub> [See all releases](https://github.com/SalmanShhh/C3Addon_SimpleVisionCast/releases) </sub> <br>
-
-#### What's New in 1.0.0.0
-- **Added:** - Documentation (via Guide file)
-- **Added:** - Example Project
-- **Added:** - Added Icon.
-
-<sub>[View full changelog](#changelog)</sub>
 
 ---
 <b><u>Author:</u></b> SalmanShh <br>
@@ -134,6 +127,8 @@ npm run dev
 
 ---
 ## Changelog
+
+**1.0.0.1**
 
 **1.0.0.0**
 - **Added:** - Documentation (via Guide file)

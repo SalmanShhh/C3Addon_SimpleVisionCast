@@ -6,29 +6,42 @@ Simple Vision Cast is a Construct 3 behavior that computes a **visibility polygo
 
 ## Table of Contents
 
-1. [Core Concepts](#1-core-concepts)
-2. [Project Setup](#2-project-setup)
-3. [Plugin Properties](#3-plugin-properties)
-4. [Obstacle Modes](#4-obstacle-modes)
-5. [Cone and Facing Angle](#5-cone-and-facing-angle)
-6. [Mesh Deformation and Rendering](#6-mesh-deformation-and-rendering)
-7. [Point-in-Visibility Queries](#7-point-in-visibility-queries)
-8. [Polygon Data Access](#8-polygon-data-access)
-9. [Performance Tuning](#9-performance-tuning)
-10. [Actions Reference](#10-actions-reference)
-11. [Conditions Reference](#11-conditions-reference)
-12. [Expressions Reference](#12-expressions-reference)
-13. [Triggers Reference](#13-triggers-reference)
-14. [System Use Cases](#14-system-use-cases)
-15. [Game Use Cases](#15-game-use-cases)
-16. [Using Simple Vision Cast with the Built-in Line of Sight Behavior](#16-using-simple-vision-cast-with-the-built-in-line-of-sight-behavior)
-17. [Using Simple Vision Cast with the Drawing Canvas Addon](#17-using-simple-vision-cast-with-the-drawing-canvas-addon)
-18. [Scripting (C3 Script / JavaScript)](#18-scripting-c3-script--javascript)
-19. [Tips and Common Mistakes](#19-tips-and-common-mistakes)
+1. [Scenarios Where This Addon Excels](#1-scenarios-where-this-addon-excels)
+2. [Core Concepts](#2-core-concepts)
+3. [Project Setup](#3-project-setup)
+4. [Plugin Properties](#4-plugin-properties)
+5. [Obstacle Modes](#5-obstacle-modes)
+6. [Cone and Facing Angle](#6-cone-and-facing-angle)
+7. [Mesh Deformation and Rendering](#7-mesh-deformation-and-rendering)
+8. [Point-in-Visibility Queries](#8-point-in-visibility-queries)
+9. [Polygon Data Access](#9-polygon-data-access)
+10. [Performance Tuning](#10-performance-tuning)
+11. [Actions Reference](#11-actions-reference)
+12. [Conditions Reference](#12-conditions-reference)
+13. [Expressions Reference](#13-expressions-reference)
+14. [Triggers Reference](#14-triggers-reference)
+15. [System Use Cases](#15-system-use-cases)
+16. [Game Use Cases](#16-game-use-cases)
+17. [Using Simple Vision Cast with the Built-in Line of Sight Behavior](#17-using-simple-vision-cast-with-the-built-in-line-of-sight-behavior)
+18. [Using Simple Vision Cast with the Drawing Canvas Addon](#18-using-simple-vision-cast-with-the-drawing-canvas-addon)
+19. [Scripting (C3 Script / JavaScript)](#19-scripting-c3-script--javascript)
+20. [Tips and Common Mistakes](#20-tips-and-common-mistakes)
 
 ---
 
-## 1. Core Concepts
+## 1. Scenarios Where This Addon Excels
+
+- **Dynamic lighting in dark levels** - place a light-sprite with additive blending; the mesh deforms to cast realistic shadows around walls.
+- **Stealth guard detection cones** - give each guard a directional cone; check `IsPointInVisibility` against the player position each tick.
+- **Fog of war for real-time strategy** - maintain one SVC instance per unit; union the polygons or use per-layer masking.
+- **Environmental hazard radii** - a spinning trap emits a visibility polygon; anything inside is damaged.
+- **Searchlight puzzles** - a rotating spotlight with a narrow cone; the player must cross without being seen.
+- **Investigation systems** - reveal interactable objects only when they fall inside the player's cone of view.
+- **Sonar / radar pings** - expand and contract the range dynamically to animate a pulse effect.
+
+---
+
+## 2. Core Concepts
 
 ### The problem this addon solves
 
@@ -53,19 +66,9 @@ The host object's mesh is used for rendering. This means the object must have a 
 | **Obstacle mode** | How obstacles are identified: Solid behavior, Custom objects, or Tag |
 | **Mesh stagger** | Skipping mesh writes to save GPU bandwidth while keeping LOS logic accurate |
 
-### Scenarios where this addon excels
-
-- **Dynamic lighting in dark levels** - place a light-sprite with additive blending; the mesh deforms to cast realistic shadows around walls.
-- **Stealth guard detection cones** - give each guard a directional cone; check `IsPointInVisibility` against the player position each tick.
-- **Fog of war for real-time strategy** - maintain one SVC instance per unit; union the polygons or use per-layer masking.
-- **Environmental hazard radii** - a spinning trap emits a visibility polygon; anything inside is damaged.
-- **Searchlight puzzles** - a rotating spotlight with a narrow cone; the player must cross without being seen.
-- **Investigation systems** - reveal interactable objects only when they fall inside the player's cone of view.
-- **Sonar / radar pings** - expand and contract the range dynamically to animate a pulse effect.
-
 ---
 
-## 2. Project Setup
+## 3. Project Setup
 
 ### Step 1 — Add the behavior
 
@@ -98,7 +101,7 @@ The mesh updates automatically - no explicit "render" action is needed.
 
 ---
 
-## 3. Plugin Properties
+## 4. Plugin Properties
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -114,7 +117,7 @@ The mesh updates automatically - no explicit "render" action is needed.
 
 ---
 
-## 4. Obstacle Modes
+## 5. Obstacle Modes
 
 Simple Vision Cast offers three ways to decide which objects block rays. Choose the mode that matches your scene structure.
 
@@ -165,7 +168,7 @@ Event: Player picks up "Thermal Goggles" item
 
 ---
 
-## 5. Cone and Facing Angle
+## 6. Cone and Facing Angle
 
 The **cone of view** defines *how wide* the visibility fan is. The **facing angle offset** defines *which direction* the fan points, relative to the host object's own angle.
 
@@ -196,7 +199,7 @@ Event: System > Every tick
 
 ---
 
-## 6. Mesh Deformation and Rendering
+## 7. Mesh Deformation and Rendering
 
 Every tick, Simple Vision Cast rewrites the host object's mesh so its vertices trace the computed visibility polygon. No shader is needed, this is a standard Construct mesh deformation.
 
@@ -243,7 +246,7 @@ Event: System > On start of layout
 
 ---
 
-## 7. Point-in-Visibility Queries
+## 8. Point-in-Visibility Queries
 
 `IsPointInVisibility(x, y)` is the primary gameplay query. It returns true when the given world-space coordinate falls inside the current visibility polygon.
 
@@ -284,7 +287,7 @@ Event: System > Every tick
 
 ---
 
-## 8. Polygon Data Access
+## 9. Polygon Data Access
 
 The visibility polygon's raw point data is accessible through the `Visibility` expression group. This lets you iterate every vertex, check which obstacle a ray hit, and compute derived metrics.
 
@@ -328,7 +331,7 @@ Event: Guard.SimpleVisionCast > On polygon updated
 
 ---
 
-## 9. Performance Tuning
+## 10. Performance Tuning
 
 A single SVC instance at 300px range, 360° cone, 100% density runs in under 1 ms on a modern desktop. The cost scales with `range × density × obstacleCount`. With dozens of instances in a busy scene you need a budget strategy.
 
@@ -367,7 +370,7 @@ Distribute update offsets across the frame by using `SetRaycastSkipRate` and var
 
 ---
 
-## 10. Actions Reference
+## 11. Actions Reference
 
 ### Setup
 
@@ -413,7 +416,7 @@ Distribute update offsets across the frame by using `SetRaycastSkipRate` and var
 
 ---
 
-## 11. Conditions Reference
+## 12. Conditions Reference
 
 | Condition | Description |
 |---|---|
@@ -426,7 +429,7 @@ Distribute update offsets across the frame by using `SetRaycastSkipRate` and var
 
 ---
 
-## 12. Expressions Reference
+## 13. Expressions Reference
 
 ### State
 
@@ -465,7 +468,7 @@ Distribute update offsets across the frame by using `SetRaycastSkipRate` and var
 
 ---
 
-## 13. Triggers Reference
+## 14. Triggers Reference
 
 | Trigger | Description |
 |---|---|
@@ -477,7 +480,7 @@ Distribute update offsets across the frame by using `SetRaycastSkipRate` and var
 
 ---
 
-## 14. System Use Cases
+## 15. System Use Cases
 
 ### Setup system
 
@@ -648,7 +651,7 @@ Event: System > On slot 1 loaded
 
 ---
 
-## 15. Game Use Cases
+## 16. Game Use Cases
 
 ### 1. Basic player torch in a top-down dungeon
 
@@ -1107,7 +1110,7 @@ The minimap canvas starts fully grey; polygon points erase the fog as the player
 
 ---
 
-## 16. Using Simple Vision Cast with the Built-in Line of Sight Behavior
+## 17. Using Simple Vision Cast with the Built-in Line of Sight Behavior
 
 Construct 3's built-in **Line of Sight** (LoS) behavior answers a single binary question: "does object A have a clear straight line to object B?" Simple Vision Cast answers a much broader one: "what is the full polygon of space that object A can see?" These two behaviors are complementary, and combining them produces AI that is both spatially aware *and* precisely accurate.
 
@@ -1224,7 +1227,7 @@ Event: System > Every tick
 
 ---
 
-## 17. Using Simple Vision Cast with the Drawing Canvas Addon
+## 18. Using Simple Vision Cast with the Drawing Canvas Addon
 
 The **Drawing Canvas** addon is a powerful tool for programmatic 2D graphics. Combined with Simple Vision Cast, it opens up possibilities for custom polygon rendering, data visualization, and complex visual effects that go beyond mesh deformation. While SVC's mesh system is optimized for real-time rendering, Drawing Canvas excels at overlays, debug displays, post-processing, and cases where you need precise pixel-level control.
 
@@ -1460,7 +1463,7 @@ This creates a visible debug overlay without affecting game performance.
 
 ---
 
-## 18. Scripting (C3 Script / JavaScript)
+## 19. Scripting (C3 Script / JavaScript)
 
 ### Accessing the behavior
 
@@ -1601,7 +1604,7 @@ runOnStartOfLayout(() => {
 
 ---
 
-## 19. Tips and Common Mistakes
+## 20. Tips and Common Mistakes
 
 - **The sprite must be large enough to hold the mesh.** If the host sprite is smaller than the `Range` value, polygon vertices outside the sprite bounds will be clipped. Make the sprite at least `Range × 2` in both width and height, centered at the origin.
 
