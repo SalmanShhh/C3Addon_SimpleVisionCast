@@ -26,6 +26,7 @@ Simple Vision Cast is a Construct 3 behavior that computes a **visibility polygo
 18. [Using Simple Vision Cast with the Drawing Canvas Addon](#18-using-simple-vision-cast-with-the-drawing-canvas-addon)
 19. [Scripting (C3 Script / JavaScript)](#19-scripting-c3-script--javascript)
 20. [Tips and Common Mistakes](#20-tips-and-common-mistakes)
+21. [Lighting Solutions with Shaders and Blend Modes](#21-lighting-solutions-with-shaders-and-blend-modes)
 
 ---
 
@@ -1625,3 +1626,337 @@ runOnStartOfLayout(() => {
 - **Savegame support is automatic.** All SVC state is written to and read from Construct's slot saves. Do not manually save and restore SVC configuration - it will double-apply.
 
 - **`OnRaycastBudgetExceeded` fires every frame the cost is over budget.** Do not reduce density inside this trigger without a cooldown, or you will fire a density reduction every frame, eventually reaching minimum quality. Use a boolean flag or a timer to gate the response.
+
+---
+
+## 21. Lighting Solutions with Shaders and Blend Modes
+
+Simple Vision Cast produces a visibility polygon and writes it to the host object's mesh. That polygon is geometry — it has no inherent visual style. Everything you see (glowing light, hard darkness, soft penumbra, coloured tints) comes from how you configure the layers, blend modes, and optional shader effects around it. This section covers the complete toolkit for building different lighting looks in Construct 3.
+
+### Layer Blend Mode Reference
+
+Understanding which blend modes are useful for lighting is the foundation. All blend modes are set per-layer in the Layer Properties panel, or per-object via the **Set blend mode** action.
+
+| Blend mode | Formula | Lighting use |
+|---|---|---|
+| **Normal** | Source fully replaces destination | Dark overlay layers; mask sprites |
+| **Additive** | src + dst | Coloured light sources; overlapping lights brighten naturally |
+| **Destination-out** | dst × (1 − src.alpha) | Punch a hole in a darkness layer where the polygon falls |
+| **Destination-in** | dst × src.alpha | Keep only the region inside the polygon; black everything outside |
+| **Screen** | 1 − (1−src)×(1−dst) | Subtle ambient fill; gentler than additive, no blowout |
+| **Multiply** | src × dst | Tinted shadow overlay; darkens without full blackout |
+
+---
+
+### Setup 1: Basic Point Light (Additive)
+
+The canonical dynamic-lighting setup. The light cone brightens whatever is beneath it; overlapping cones add together naturally.
+
+**Layer stack (bottom to top):**
+1. `World` — game objects, tiles, sprites
+2. `Lights` — all SVC light sprites (blend mode: **Additive**, background: transparent black)
+
+**Sprite configuration:**
+- Texture: white radial gradient (bright centre, fully transparent edge)
+- Size: at least `Range × 2` px in each dimension, centred origin
+- Blend mode: **Normal** on the sprite itself (the *layer* is Additive)
+
+**Event sheet:**
+```
+Event: System > On start of layout
+  Action: Torch.SimpleVisionCast > Set obstacle mode to Tag
+  Action: Torch.SimpleVisionCast > Set obstacle tag to "wall"
+
+Event: System > Every tick
+  Action: Torch.SimpleVisionCast > Set facing angle offset to Torch.Angle
+```
+
+No explicit render call is needed — SVC writes the mesh automatically each tick.
+
+**Coloured lights:** Tint the Sprite to any colour (orange for torches, blue for magic, red for danger). Multiple tinted additive lights blend into natural mixed-colour illumination.
+
+---
+
+### Setup 2: Full Darkness with Fog of War (Destination-out)
+
+Covers the entire layout in black and reveals only the area inside the visibility polygon.
+
+**Layer stack (bottom to top):**
+1. `World` — game objects
+2. `Reveal` — the SVC mesh sprite (blend mode: **Normal**, white fill, background: transparent)
+3. `Darkness` — solid black Tiled Background covering the full layout (blend mode: **Destination-out**)
+
+> The `Destination-out` layer uses the `Reveal` layer as its alpha source. Wherever the `Reveal` layer has white pixels (inside the polygon), the `Darkness` layer becomes transparent. Everything else stays black.
+
+**Event sheet:**
+```
+Event: System > On start of layout
+  Action: RevealSprite.SimpleVisionCast > Set obstacle mode to Tag
+  Action: RevealSprite.SimpleVisionCast > Set obstacle tag to "wall"
+
+Event: System > Every tick
+  Action: RevealSprite > Set position to Player.X, Player.Y
+  Action: RevealSprite.SimpleVisionCast > Set facing angle offset to Player.Angle
+```
+
+**Ambient darkness level:** Reduce the `Darkness` layer's **Opacity** to leave a dim ambient light outside the polygon. 100% opacity = pitch black; 60% opacity = dim ambient room.
+
+---
+
+### Setup 3: Flashlight / Directional Spotlight
+
+A narrow cone that follows the player's aim direction, useful for horror games and stealth mechanics.
+
+**Properties:**
+- Cone: `50–80`
+- Range: `500–800`
+- Ray density: `75–100%`
+
+**Event sheet:**
+```
+Event: System > Every tick
+  Action: Flashlight > Set position to Player.X, Player.Y
+  Action: Flashlight.SimpleVisionCast > Set facing angle offset to
+    angle(Player.X, Player.Y, Mouse.X, Mouse.Y)
+```
+
+**Shader enhancement — soft edge falloff:**
+1. Add a **Blur** effect to the `Lights` layer (`Blur X/Y = 10`).
+2. Optionally add a second pass layer with **Blur = 30**, opacity 40% — this creates a glow halo.
+
+The polygon hard edge disappears into a soft gradient, giving the flashlight a photographic feel.
+
+---
+
+### Setup 4: Darkness Layer with Ambient Light (Screen Blend)
+
+For scenes that are dim but not pitch black — moonlit exteriors, foggy interiors, twilight.
+
+**Layer stack:**
+1. `World`
+2. `AmbientDark` — semi-transparent dark blue Tiled Background (Normal blend, ~70% opacity)
+3. `Lights` — SVC sprites (blend mode: **Screen**)
+
+Screen blending prevents lights from over-brightening. At high opacity the lit area looks naturally illuminated; at low opacity it blends into the ambient dark.
+
+**When to choose Screen over Additive:**
+- Additive works best for pure black backgrounds — lights glow brilliantly.
+- Screen works best for non-black backgrounds — lights illuminate without blowing out colour.
+
+---
+
+### Setup 5: Soft Shadows with Gaussian Blur
+
+Polygon edges are mathematically sharp. A blur pass on the lights layer softens them into a penumbra-like falloff without any extra geometry.
+
+**Layer configuration:**
+1. `Lights` layer — Additive blend
+2. Add effect: **Blur** (`Blur X = 12, Blur Y = 12`) on the `Lights` layer
+3. Optionally add effect: **Bloom** on top of the Blur
+
+**Result:** The hard shadow boundary from SVC's raycaster becomes a soft gradient. The further from the light origin, the dimmer the illumination — the blur radius controls the penumbra width.
+
+**Two-layer glow stack:**
+- `Lights_Crisp` layer (Additive, no blur) — sharp core of the light
+- `Lights_Glow` layer (Additive, Blur = 25, opacity 50%) — soft halo
+
+This separates the hard polygon (for accurate detection) from the soft visual (for aesthetics). SVC mesh deform runs on the `Lights_Crisp` sprite; copy its position to a duplicate sprite on `Lights_Glow` each tick.
+
+```
+Event: System > Every tick
+  Action: GlowDuplicate > Set position to Light.X, Light.Y
+  Action: GlowDuplicate > Set angle to Light.Angle
+  // GlowDuplicate is a copy of the light sprite on the blur layer
+  // Its mesh updates via its own SVC instance with identical settings
+```
+
+---
+
+### Setup 6: Hard-Shadow Dungeon (Destination-in)
+
+High-contrast look where everything outside the polygon is completely invisible. Suited for tile-based dungeons, noir games, or horror.
+
+**Layer stack:**
+1. `World` — tiles and objects
+2. `LightMask` — SVC mesh sprite (white fill, blend mode: **Normal**)
+3. `DarkOverlay` — black Tiled Background covering the layout (blend mode: **Destination-in**)
+
+The `Destination-in` mode on `DarkOverlay` keeps only the region that overlaps with the `LightMask` layer. Everything outside the polygon is stripped, showing the `World` layer only where the polygon falls.
+
+> This is the inverse of Destination-out: instead of cutting a hole in darkness, you keep only the lit region.
+
+**Event sheet:** Same as Setup 2 — just swap `Destination-out` for `Destination-in` on the overlay layer.
+
+**Optional retro shader:** Add a **Pixelate** or **Scanlines** effect to the `DarkOverlay` layer for a retro pixel-art aesthetic without affecting the game geometry.
+
+---
+
+### Setup 7: Coloured Lights with Temperature Blending
+
+Multiple lights of different temperatures blend realistically under additive blending.
+
+**Colour convention:**
+
+| Light source | Suggested tint |
+|---|---|
+| Warm torch / fire | `RGB(255, 160, 60)` |
+| Cold moonlight | `RGB(130, 160, 255)` |
+| Magic / arcane | `RGB(160, 80, 255)` |
+| Danger / alarm | `RGB(255, 50, 50)` |
+| Underwater / bioluminescent | `RGB(60, 200, 220)` |
+
+Apply the tint via **Set color** on the SVC sprite. Under additive blending, two overlapping tinted lights automatically produce a mixed colour (warm + cold = natural white zone where they overlap).
+
+**Dynamic colour temperature (day/night cycle):**
+```
+Event: System > Every tick
+  // DayCycle goes 0.0 (midnight) → 1.0 (noon)
+  Action: SunLight > Set color to
+    lerp(100, 255, DayCycle),    // Red
+    lerp(120, 240, DayCycle),    // Green
+    lerp(200, 200, DayCycle)     // Blue
+  Action: SunLight.SimpleVisionCast > Set range to 300 + DayCycle * 1500
+```
+
+---
+
+### Setup 8: Normal Map Surface Shading
+
+Adds a pseudo-3D lighting response to sprites so surfaces appear to be lit from the direction of the SVC light source. Requires sprite normal map textures and the **Normal Map** (or **Point Light**) shader from the Construct 3 shader library.
+
+**How SVC connects to the shader:**
+
+The Normal Map shader takes a light position in normalised layer space as input. SVC provides the light source world position. Convert and feed it each tick.
+
+```
+Event: System > Every tick
+  Action: WorldSprites > Set effect "NormalMap" parameter "LightX" to
+    Light.X / LayoutWidth
+  Action: WorldSprites > Set effect "NormalMap" parameter "LightY" to
+    Light.Y / LayoutHeight
+  Action: WorldSprites > Set effect "NormalMap" parameter "LightIntensity" to
+    1.0 - (distance(Light.X, Light.Y, WorldSprites.X, WorldSprites.Y) / Light.SimpleVisionCast.ARange)
+```
+
+**Division of responsibility:**
+- SVC polygon → handles hard occlusion (areas outside the polygon are not lit)
+- Normal map shader → handles soft directional surface shading inside the lit region
+
+Combine both: SVC on the `Lights` layer shapes the lit region; the Normal Map effect on the `World` layer shades surfaces within that region based on the light position.
+
+---
+
+### Setup 9: Multiple Lights — Recommended Layer Architecture
+
+With more than one or two lights, a well-organised layer stack keeps blend modes from interfering with each other.
+
+**Full recommended stack (bottom to top):**
+
+| Layer | Contents | Blend mode | Notes |
+|---|---|---|---|
+| `Background` | Parallax backgrounds | Normal | Unlit backdrop |
+| `World` | Tiles, static objects | Normal | Receives shadow |
+| `Characters` | NPCs, player, items | Normal | Receives shadow |
+| `NormalMap` | Same world sprites with NM effect | Normal | Surface shading |
+| `Lights_Crisp` | SVC light sprites (crisp) | Additive | Core polygon |
+| `Lights_Glow` | Duplicate light sprites | Additive + Blur | Soft glow halo |
+| `Darkness` | Black overlay | Destination-out | Cut by Lights_Crisp |
+| `FX` | Particles, VFX | Additive | Above darkness |
+| `UI` | HUD | Normal | Never affected by lighting |
+
+> `Lights_Crisp` shapes the hole punched in `Darkness`. `Lights_Glow` is purely cosmetic — a blurred duplicate of the same sprites that creates halos visible through the darkness gap.
+
+**Per-light tier settings:**
+
+| Light tier | Ray density | Stagger | Skip rate | Max candidates |
+|---|---|---|---|---|
+| Player / hero (1–2) | 75–100% | 0 | 0 | 0 (unlimited) |
+| Nearby torches (≤10) | 50% | 1 | 0 | 20 |
+| Background torches (≤30) | 25% | 2 | 3 | 10 |
+| Off-screen / sleeping | 25% | 0 | 0 | — (disabled) |
+
+---
+
+### Setup 10: Flickering and Animated Lights
+
+Organic flicker requires no shaders — SVC's dynamic range and cone updates are all that is needed.
+
+**Candle flicker:**
+```
+Event: System > Every 0.05 seconds + random(0.1) seconds
+  Action: Candle.SimpleVisionCast > Set range to 180 + random(60) - 30
+  Action: Candle.SimpleVisionCast > Set cone of view to 360
+  Action: Candle > Set color to
+    255,
+    lerp(120, 200, random(1)),   // Green variation
+    lerp(30, 80, random(1))      // Blue variation
+```
+
+**Fire pulse (expanding and contracting):**
+```
+Event: System > Every tick
+  Action: Fire.SimpleVisionCast > Set range to
+    250 + sin(Time * 8) * 40 + sin(Time * 13) * 20
+```
+
+**Damaged / electrical flicker:**
+```
+Event: System > Every tick
+  Condition: random(1) < 0.05  // 5% chance per frame to stutter
+    Action: BrokenLight.SimpleVisionCast > Set range to random(50) + 50
+  Else:
+    Action: BrokenLight.SimpleVisionCast > Set range to 280
+```
+
+**Blur + flicker for soft glow pulse:** Add a **Blur** effect on the `Lights` layer and vary its radius parameter each tick in sync with the range change. As the range shrinks, the blur radius shrinks too — the light appears to "breathe."
+
+```
+Event: System > Every tick
+  Local variable: FlickerStrength = (Fire.SimpleVisionCast.ARange - 150) / 200
+  Action: Lights layer > Set effect "Blur" parameter "BlurX" to 8 + FlickerStrength * 15
+  Action: Lights layer > Set effect "Blur" parameter "BlurY" to 8 + FlickerStrength * 15
+```
+
+---
+
+### Setup 11: Sonar / Radar Pulse
+
+An expanding ring effect useful for sonar, radar sweeps, or magical detection fields. SVC's range grows from zero outward, then the instance is disabled or destroyed.
+
+```
+Event: Player presses "Ping" (sonar)
+  Action: System > Create object SonarPulse at Player.X, Player.Y
+  Action: SonarPulse.SimpleVisionCast > Set range to 1
+  Action: SonarPulse.SimpleVisionCast > Set cone of view to 360
+  Action: SonarPulse.SimpleVisionCast > Set ray density to 25
+
+Event: System > Every tick
+  Condition: SonarPulse exists
+  Condition: SonarPulse.SimpleVisionCast.ARange < 700
+    Action: SonarPulse.SimpleVisionCast > Set range to
+      SonarPulse.SimpleVisionCast.ARange + 18
+
+Event: System > Every tick
+  Condition: SonarPulse.SimpleVisionCast.ARange >= 700
+    Action: SonarPulse > Destroy
+
+Event: SonarPulse.SimpleVisionCast > On polygon updated
+  Sub-event: For each Enemy
+    Condition: SonarPulse.SimpleVisionCast > Is point in visibility Enemy.X, Enemy.Y
+      Action: Enemy > Flash highlight for 1 second
+```
+
+Layer the SonarPulse sprite with an **Additive** blend and a ring/donut texture so only the polygon boundary edge is visible rather than the filled cone.
+
+---
+
+### Blend Mode Decision Reference
+
+| Desired effect | Blend mode to use | Layer the SVC mesh sits on |
+|---|---|---|
+| Light that brightens the scene | **Additive** | `Lights` layer |
+| Black fog with lit hole | **Destination-out** | `Darkness` overlay layer |
+| Show only lit region, hide rest | **Destination-in** | `Darkness` overlay layer |
+| Dim ambient with brighter spot | **Screen** | `Lights` layer |
+| Tinted shadow filter | **Multiply** | Semi-transparent coloured overlay |
+| Debug / no blending | **Normal** | Any dedicated layer |

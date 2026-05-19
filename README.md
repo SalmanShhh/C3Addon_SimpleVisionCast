@@ -7,6 +7,11 @@
 <br>
 <sub> [See all releases](https://github.com/SalmanShhh/C3Addon_SimpleVisionCast/releases) </sub> <br>
 
+#### What's New in 1.0.0.1
+- **Added:** - (Guide) add section for possible Lighting Solutions using the Addon.
+
+<sub>[View full changelog](#changelog)</sub>
+
 ---
 <b><u>Author:</u></b> SalmanShh <br>
 <sub>Made using [CAW](https://marketplace.visualstudio.com/items?itemName=skymen.caw) </sub><br>
@@ -129,6 +134,7 @@ npm run dev
 ## Changelog
 
 **1.0.0.1**
+- **Added:** - (Guide) add section for possible Lighting Solutions using the Addon.
 
 **1.0.0.0**
 - **Added:** - Documentation (via Guide file)
